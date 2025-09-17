@@ -1,0 +1,273 @@
+"""
+Tests for the FastAPI application.
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+import json
+
+from api import app
+
+
+@pytest.fixture
+def client():
+    """Create a test client for the FastAPI app."""
+    return TestClient(app)
+
+
+@pytest.fixture
+def mock_sentiment_pipeline():
+    """Mock the global sentiment pipeline."""
+    mock_pipeline = {
+        "tokenizer": MagicMock(),
+        "model": MagicMock()
+    }
+
+    # Setup tokenizer mock
+    mock_pipeline["tokenizer"].return_value = {
+        "input_ids": [[1, 2, 3]],
+        "attention_mask": [[1, 1, 1]]
+    }
+
+    # Setup model mock
+    mock_outputs = MagicMock()
+    mock_outputs.logits.argmax.return_value.item.return_value = 2  # Positive
+    mock_outputs.logits.softmax.return_value = [[0.1, 0.2, 0.7]]  # Positive with 0.7 confidence
+    mock_pipeline["model"].return_value = mock_outputs
+    mock_pipeline["model"].config.id2label = {0: "negative", 1: "neutral", 2: "positive"}
+
+    return mock_pipeline
+
+
+class TestHealthEndpoint:
+    """Test the health check endpoint."""
+
+    def test_root_endpoint(self, client):
+        """Test the root health check endpoint."""
+        response = client.get("/")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert "Edgar-Text API is running" in data["message"]
+
+
+class TestSentimentAnalysis:
+    """Test the sentiment analysis endpoint."""
+
+    @patch("api.sentiment_pipeline")
+    def test_analyze_sentiment_success(self, mock_pipeline_global, client, mock_sentiment_pipeline):
+        """Test successful sentiment analysis."""
+        mock_pipeline_global.__bool__.return_value = True
+        mock_pipeline_global.__getitem__.side_effect = mock_sentiment_pipeline.__getitem__
+
+        request_data = {"text": "The company reported excellent quarterly results."}
+        response = client.post("/analyze/sentiment", json=request_data)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["label"] == "POSITIVE"
+        assert data["score"] == 0.7
+
+    def test_analyze_sentiment_empty_text(self, client):
+        """Test sentiment analysis with empty text."""
+        request_data = {"text": ""}
+        response = client.post("/analyze/sentiment", json=request_data)
+
+        # Should still work with empty text (model handles it)
+        assert response.status_code in [200, 422]  # 422 if validation fails
+
+    def test_analyze_sentiment_invalid_request(self, client):
+        """Test sentiment analysis with invalid request data."""
+        response = client.post("/analyze/sentiment", json={})
+
+        assert response.status_code == 422  # Validation error
+
+    @patch("api.sentiment_pipeline", {})
+    def test_analyze_sentiment_model_not_loaded(self, client):
+        """Test sentiment analysis when model is not loaded."""
+        request_data = {"text": "Test text"}
+        response = client.post("/analyze/sentiment", json=request_data)
+
+        assert response.status_code == 503
+        assert "Model is not loaded" in response.json()["detail"]
+
+    @patch("api.sentiment_pipeline")
+    def test_analyze_sentiment_model_error(self, mock_pipeline_global, client):
+        """Test sentiment analysis when model throws an error."""
+        mock_pipeline_global.__bool__.return_value = True
+        mock_pipeline_global.__getitem__.side_effect = Exception("Model inference error")
+
+        request_data = {"text": "Test text"}
+        response = client.post("/analyze/sentiment", json=request_data)
+
+        assert response.status_code == 500
+        assert "Internal server error" in response.json()["detail"]
+
+
+class TestCompanyAnalysis:
+    """Test the company analysis endpoint."""
+
+    @patch("api.main.analyze_company")
+    def test_get_analysis_success(self, mock_analyze, client):
+        """Test successful company analysis."""
+        mock_result = {
+            "ticker": "AAPL",
+            "latest_filing": {
+                "filed_at": "2024-01-01",
+                "gunning_fog_score": 12.5,
+                "sentiment": {"positive_count": 10, "negative_count": 5}
+            },
+            "prior_filing": {
+                "filed_at": "2023-01-01",
+                "gunning_fog_score": 11.8,
+                "sentiment": {"positive_count": 8, "negative_count": 7}
+            },
+            "comparison_metrics": {"change_score_similarity_ratio": 0.85}
+        }
+        mock_analyze.return_value = mock_result
+
+        response = client.get("/analyze/AAPL")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ticker"] == "AAPL"
+        assert "latest_filing" in data
+        assert "prior_filing" in data
+        mock_analyze.assert_called_once_with("AAPL")
+
+    @patch("api.main.analyze_company")
+    def test_get_analysis_value_error(self, mock_analyze, client):
+        """Test company analysis with invalid ticker."""
+        mock_analyze.side_effect = ValueError("Invalid ticker")
+
+        response = client.get("/analyze/INVALID")
+
+        assert response.status_code == 404
+        assert "Invalid ticker" in response.json()["detail"]
+
+    @patch("api.main.analyze_company")
+    def test_get_analysis_unexpected_error(self, mock_analyze, client):
+        """Test company analysis with unexpected error."""
+        mock_analyze.side_effect = Exception("Unexpected error")
+
+        response = client.get("/analyze/AAPL")
+
+        assert response.status_code == 500
+        assert "An unexpected error occurred" in response.json()["detail"]
+
+
+class TestPaymentEndpoints:
+    """Test Stripe payment integration endpoints."""
+
+    @patch("api.stripe.checkout.Session.create")
+    def test_create_checkout_session_success(self, mock_create, client):
+        """Test successful checkout session creation."""
+        mock_session = MagicMock()
+        mock_session.url = "https://checkout.stripe.com/session123"
+        mock_create.return_value = mock_session
+
+        response = client.post("/create-checkout-session")
+
+        assert response.status_code == 303  # Redirect status
+        assert response.headers["location"] == "https://checkout.stripe.com/session123"
+
+    @patch("api.stripe.checkout.Session.create")
+    def test_create_checkout_session_error(self, mock_create, client):
+        """Test checkout session creation error."""
+        mock_create.side_effect = Exception("Stripe error")
+
+        response = client.post("/create-checkout-session")
+
+        assert response.status_code == 400
+        assert "Stripe error" in response.json()["detail"]
+
+    @patch("api.stripe.Webhook.construct_event")
+    def test_stripe_webhook_success(self, mock_construct, client):
+        """Test successful webhook processing."""
+        mock_event = {
+            "id": "evt_123",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_123"}}
+        }
+        mock_construct.return_value = mock_event
+
+        headers = {"stripe-signature": "test_signature"}
+        response = client.post("/webhook", content=b"webhook_payload", headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+
+    @patch("api.stripe.Webhook.construct_event")
+    def test_stripe_webhook_invalid_payload(self, mock_construct, client):
+        """Test webhook with invalid payload."""
+        mock_construct.side_effect = ValueError("Invalid payload")
+
+        headers = {"stripe-signature": "test_signature"}
+        response = client.post("/webhook", content=b"invalid_payload", headers=headers)
+
+        assert response.status_code == 400
+        assert "Invalid payload" in response.json()["detail"]
+
+    @patch("api.stripe.Webhook.construct_event")
+    def test_stripe_webhook_duplicate_event(self, mock_construct, client):
+        """Test webhook idempotency with duplicate events."""
+        mock_event = {
+            "id": "evt_duplicate",
+            "type": "checkout.session.completed",
+            "data": {"object": {"id": "cs_123"}}
+        }
+        mock_construct.return_value = mock_event
+
+        # Add event to processed set
+        from api import PROCESSED_EVENTS
+        PROCESSED_EVENTS.add("evt_duplicate")
+
+        headers = {"stripe-signature": "test_signature"}
+        response = client.post("/webhook", content=b"webhook_payload", headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "already processed"
+
+        # Clean up
+        PROCESSED_EVENTS.discard("evt_duplicate")
+
+
+class TestAPIDocumentation:
+    """Test API documentation endpoints."""
+
+    def test_openapi_docs_available(self, client):
+        """Test that OpenAPI documentation is available."""
+        response = client.get("/docs")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+    def test_redoc_available(self, client):
+        """Test that ReDoc documentation is available."""
+        response = client.get("/redoc")
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+
+    def test_openapi_json(self, client):
+        """Test OpenAPI JSON specification."""
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+
+        openapi_spec = response.json()
+        assert openapi_spec["info"]["title"] == "Edgar-Text API"
+        assert "paths" in openapi_spec
+        assert "/analyze/sentiment" in openapi_spec["paths"]
+        assert "/analyze/{ticker}" in openapi_spec["paths"]
+
+
+# Conftest for shared test configuration
+@pytest.fixture(autouse=True)
+def reset_processed_events():
+    """Reset processed events set before each test."""
+    from api import PROCESSED_EVENTS
+    original_events = PROCESSED_EVENTS.copy()
+    PROCESSED_EVENTS.clear()
+    yield
+    PROCESSED_EVENTS.clear()
+    PROCESSED_EVENTS.update(original_events)

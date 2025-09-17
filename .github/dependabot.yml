@@ -1,0 +1,82 @@
+# GitHub Dependabot configuration for Edgar-Text API
+# Automatically creates pull requests for dependency updates
+
+version: 2
+updates:
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "edgar-text-maintainers"  # Replace with actual team/user
+    assignees:
+      - "edgar-text-maintainers"  # Replace with actual team/user
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "python"
+    # Group related updates
+    groups:
+      fastapi-ecosystem:
+        patterns:
+          - "fastapi*"
+          - "uvicorn*"
+          - "pydantic*"
+          - "starlette*"
+      ml-ecosystem:
+        patterns:
+          - "transformers*"
+          - "optimum*"
+          - "torch*"
+          - "onnx*"
+      testing-tools:
+        patterns:
+          - "pytest*"
+          - "httpx*"
+          - "coverage*"
+      security-tools:
+        patterns:
+          - "PyJWT*"
+          - "cryptography*"
+          - "bcrypt*"
+    # Version update strategy
+    versioning-strategy: "increase"
+    # Allow updates to these types
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # Ignore specific dependencies that need manual review
+    ignore:
+      - dependency-name: "optimum"
+        # ML models might have breaking changes
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "transformers"
+        # ML models might have breaking changes
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "edgar-text-maintainers"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"

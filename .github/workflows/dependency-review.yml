@@ -1,0 +1,106 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'requirements.txt'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          allow-dependencies-licenses: |
+            MIT
+            Apache-2.0
+            BSD-2-Clause
+            BSD-3-Clause
+            ISC
+            MPL-2.0
+          deny-licenses: |
+            GPL-3.0
+            AGPL-3.0
+          comment-summary-in-pr: true
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety bandit
+
+      - name: Security audit with safety
+        run: |
+          safety check --json --output safety-report.json || true
+          safety check
+
+      - name: Security scan with bandit
+        run: |
+          bandit -r . -x .venv/,tests/ --format json -o bandit-report.json || true
+          bandit -r . -x .venv/,tests/ --severity-level medium
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            safety-report.json
+            bandit-report.json
+
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install pip-licenses
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-licenses
+
+      - name: Install project dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Check licenses
+        run: |
+          pip-licenses --format=json --output-file=licenses.json
+          pip-licenses --format=markdown --output-file=licenses.md
+
+          # Check for problematic licenses
+          pip-licenses --fail-on="GPL v3;AGPL v3"
+
+      - name: Upload license report
+        uses: actions/upload-artifact@v3
+        with:
+          name: license-reports
+          path: |
+            licenses.json
+            licenses.md
