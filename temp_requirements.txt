@@ -1,12 +1,12 @@
 diskcache==5.6.3
-fastapi==0.116.1
-fastapi-cli==0.0.8
+fastapi==0.116.2
+fastapi-cli==0.0.12
 fastapi-cloud-cli==0.1.5
 optimum==1.27.0
-pydantic==2.9.2
+pydantic==2.11.9
 pydantic-extra-types==2.10.5
 pydantic-settings==2.10.1
-pydantic_core==2.23.4
+pydantic_core==2.39.0
 python-dotenv==1.1.1
 sec-api==1.0.32
 stripe==12.4.0
