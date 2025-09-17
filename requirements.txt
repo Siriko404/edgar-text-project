@@ -12,7 +12,7 @@ transformers==4.53.3
 pydantic==2.9.2
 psutil==6.1.0  # System monitoring
 PyJWT==2.9.0  # JWT token handling
-email-validator==2.2.0  # Email validation for Pydantic
+email-validator==2.3.0  # Email validation for Pydantic
 
 # Development dependencies
 black==24.8.0
