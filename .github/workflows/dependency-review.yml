@@ -61,7 +61,7 @@ jobs:
           bandit -r . -x .venv/,tests/ --severity-level medium
 
       - name: Upload security reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-reports
@@ -98,7 +98,7 @@ jobs:
           pip-licenses --fail-on="GPL v3;AGPL v3"
 
       - name: Upload license report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: license-reports
           path: |
