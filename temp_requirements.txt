@@ -11,5 +11,5 @@ python-dotenv==1.1.1
 sec-api==1.0.32
 stripe==12.4.0
 textstat==0.7.8
-transformers==4.53.3
+transformers==4.56.1
 uvicorn==0.35.0
