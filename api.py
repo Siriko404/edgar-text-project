@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Header, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from optimum.onnxruntime import ORTModelForSequenceClassification
 from transformers import AutoTokenizer
 import time
@@ -143,7 +143,8 @@ class SentimentRequest(BaseModel):
         description="Text to analyze (1-5000 characters)",
     )
 
-    @validator("text")
+    @field_validator("text")
+    @classmethod
     def validate_text_content(cls, v):
         """Validate text content for security."""
         if not v.strip():
@@ -163,7 +164,7 @@ class TickerRequest(BaseModel):
         ...,
         min_length=1,
         max_length=10,
-        regex=r"^[A-Z]{1,5}$",
+        pattern=r"^[A-Z]{1,5}$",
         description="Stock ticker symbol (1-5 uppercase letters)",
     )
 
