@@ -265,6 +265,61 @@ class TestAPIDocumentation:
         assert "/analyze/{ticker}" in openapi_spec["paths"]
 
 
+class TestTieredRateLimits:
+    """Test tiered rate limiting and X-RateLimit-* headers."""
+
+    def _clear_limits(self):
+        from api import rate_limit_storage
+
+        rate_limit_storage.clear()
+
+    @patch("api.main.analyze_company")
+    def test_anonymous_headers_present(self, mock_analyze, client):
+        """Anonymous responses carry the 10/hour limit headers."""
+        self._clear_limits()
+        mock_analyze.return_value = {"ticker": "AAPL"}
+
+        response = client.get("/analyze/AAPL")
+
+        assert response.status_code == 200
+        assert response.headers["X-RateLimit-Limit"] == "10"
+        assert "X-RateLimit-Remaining" in response.headers
+        assert "X-RateLimit-Reset" in response.headers
+
+    @patch("api.main.analyze_company")
+    def test_anonymous_limit_enforced(self, mock_analyze, client):
+        """The 11th anonymous request within the window is rejected."""
+        self._clear_limits()
+        mock_analyze.return_value = {"ticker": "AAPL"}
+
+        for _ in range(10):
+            assert client.get("/analyze/AAPL").status_code == 200
+        response = client.get("/analyze/AAPL")
+        assert response.status_code == 429
+
+    @patch("api.main.analyze_company")
+    def test_authenticated_higher_limit(self, mock_analyze, client):
+        """An authenticated basic-tier caller sees the 1000/hour bucket."""
+        self._clear_limits()
+        mock_analyze.return_value = {"ticker": "AAPL"}
+        from auth import get_current_user_optional
+        from api import app as fastapi_app
+
+        fastapi_app.dependency_overrides[get_current_user_optional] = lambda: {
+            "user_id": "u1",
+            "tier": "basic",
+            "rate_limit": 1000,
+            "auth_type": "jwt",
+        }
+        try:
+            response = client.get("/analyze/AAPL")
+        finally:
+            fastapi_app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert response.headers["X-RateLimit-Limit"] == "1000"
+
+
 # Conftest for shared test configuration
 @pytest.fixture(autouse=True)
 def reset_processed_events():

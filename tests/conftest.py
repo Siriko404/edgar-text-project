@@ -26,11 +26,17 @@ import pytest  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _clear_disk_cache():
-    """Clear the persistent disk cache so memoized calls never leak between tests."""
+    """Clear persistent caches and rate buckets so tests never leak state."""
     try:
         import main
 
         main.cache.clear()
+    except Exception:
+        pass
+    try:
+        import api
+
+        api.rate_limit_storage.clear()
     except Exception:
         pass
     yield
@@ -38,5 +44,11 @@ def _clear_disk_cache():
         import main
 
         main.cache.clear()
+    except Exception:
+        pass
+    try:
+        import api
+
+        api.rate_limit_storage.clear()
     except Exception:
         pass

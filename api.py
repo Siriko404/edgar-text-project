@@ -2,7 +2,8 @@ import os
 import re
 import stripe
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header, Request, status
+from typing import Dict, Any, Optional
+from fastapi import Depends, FastAPI, HTTPException, Header, Request, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -83,28 +84,67 @@ app.add_middleware(
 )
 
 # --- Rate Limiting ---
+# Tiered per-identity rate limiting. Anonymous callers share a per-IP bucket;
+# authenticated callers get the bucket of their tier (see docs/API.md).
 rate_limit_storage = defaultdict(list)
 RATE_LIMIT_REQUESTS = 100  # requests per window
 RATE_LIMIT_WINDOW = 3600  # 1 hour in seconds
 
 
 def check_rate_limit(client_ip: str) -> bool:
-    """Simple in-memory rate limiting."""
+    """Simple in-memory rate limiting (legacy fixed bucket, kept for compat)."""
+    return _check_bucket(f"ip:{client_ip}", RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
+
+
+def _check_bucket(key: str, limit: int, window: int) -> bool:
+    """Record a hit in the named bucket; True when under the limit."""
     now = time.time()
     # Clean old requests
-    rate_limit_storage[client_ip] = [
-        req_time
-        for req_time in rate_limit_storage[client_ip]
-        if now - req_time < RATE_LIMIT_WINDOW
+    rate_limit_storage[key] = [
+        req_time for req_time in rate_limit_storage[key] if now - req_time < window
     ]
 
     # Check if under limit
-    if len(rate_limit_storage[client_ip]) >= RATE_LIMIT_REQUESTS:
+    if len(rate_limit_storage[key]) >= limit:
         return False
 
     # Add current request
-    rate_limit_storage[client_ip].append(now)
+    rate_limit_storage[key].append(now)
     return True
+
+
+def _rate_limit_identity(user: Optional[Dict[str, Any]], client_ip: str) -> str:
+    """Bucket key: authenticated identity when present, else caller IP."""
+    if user:
+        return f"{user.get('auth_type', 'auth')}:{user.get('user_id', 'unknown')}"
+    return f"ip:{client_ip}"
+
+
+def enforce_tiered_rate_limit(
+    response: Response, user: Optional[Dict[str, Any]], client_ip: str
+) -> None:
+    """Enforce the caller's tier limit and set X-RateLimit-* headers.
+
+    Raises 429 when the bucket is exhausted; always sets headers.
+    """
+    limit = get_user_rate_limit(user)
+    key = _rate_limit_identity(user, client_ip)
+    now = time.time()
+    hits = [
+        t for t in rate_limit_storage[key] if now - t < RATE_LIMIT_WINDOW
+    ]
+    remaining = max(0, limit - len(hits))
+    reset = int(now + RATE_LIMIT_WINDOW)
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(reset)
+    if len(hits) >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Please try again later.",
+        )
+    rate_limit_storage[key] = hits + [now]
+    response.headers["X-RateLimit-Remaining"] = str(max(0, limit - len(hits) - 1))
 
 
 # --- Load Quantized ONNX Model at Startup ---
@@ -210,17 +250,18 @@ def get_metrics():
 
 
 @app.post("/analyze/sentiment", tags=["Analysis"], response_model=SentimentResponse)
-async def analyze_sentiment(request: SentimentRequest, client_request: Request):
+async def analyze_sentiment(
+    request: SentimentRequest,
+    client_request: Request,
+    response: Response,
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
     """
     Analyzes the sentiment of a given block of text using the optimized DistilFinBERT model.
+    Authentication is optional but increases the rate limit (see docs/API.md).
     """
-    # Rate limiting check
-    client_ip = client_request.client.host
-    if not check_rate_limit(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded. Please try again later.",
-        )
+    # Tiered rate limiting check (sets X-RateLimit-* headers)
+    enforce_tiered_rate_limit(response, user, client_request.client.host)
 
     if not sentiment_pipeline:
         raise HTTPException(status_code=503, detail="Model is not loaded yet.")
@@ -258,18 +299,19 @@ async def analyze_sentiment(request: SentimentRequest, client_request: Request):
 
 
 @app.get("/analyze/{ticker}", tags=["Analysis"])
-def get_analysis(ticker: str, client_request: Request):
+def get_analysis(
+    ticker: str,
+    client_request: Request,
+    response: Response,
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
     """
     Triggers the full filing analysis for a given company ticker.
+    Authentication is optional but increases the rate limit (see docs/API.md).
     (This is now a synchronous function to fix the 'await' error)
     """
-    # Rate limiting check
-    client_ip = client_request.client.host
-    if not check_rate_limit(client_ip):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded. Please try again later.",
-        )
+    # Tiered rate limiting check (sets X-RateLimit-* headers)
+    enforce_tiered_rate_limit(response, user, client_request.client.host)
 
     # Validate ticker format
     if not re.match(r"^[A-Z]{1,5}$", ticker.upper()):
