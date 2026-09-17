@@ -117,6 +117,11 @@ async def signup(request: SignupRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unknown tier. Choose free, basic, or premium.",
         )
+    if request.tier == "premium":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Premium requires payment. Sign up free, then POST /create-checkout-session.",
+        )
     try:
         user = auth_store.create_user(request.email, request.password, request.tier)
     except ValueError as e:

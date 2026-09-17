@@ -229,8 +229,35 @@ class SentimentResponse(BaseModel):
     score: float
 
 
-# --- In-memory Event Store (for webhook idempotency) ---
+class CheckoutRequest(BaseModel):
+    """Optional checkout options."""
+
+    tier: str = Field(
+        default="basic",
+        description="Tier to provision after payment (basic or premium)",
+    )
+
+
+# --- Webhook idempotency (persisted in disk cache, shared across workers) ---
+# PROCESSED_EVENTS mirrors recent ids in memory; the cache is authoritative.
 PROCESSED_EVENTS = set()
+
+
+def _stripe_event_processed(event_id: str) -> bool:
+    if event_id in PROCESSED_EVENTS:
+        return True
+    try:
+        return bool(main.cache.get(f"stripe_event:{event_id}"))
+    except Exception:
+        return False
+
+
+def _stripe_event_mark(event_id: str) -> None:
+    PROCESSED_EVENTS.add(event_id)
+    try:
+        main.cache.set(f"stripe_event:{event_id}", True)
+    except Exception as e:
+        logger.warning(f"Could not persist webhook event {event_id}: {e}")
 
 
 # --- API Endpoints ---
@@ -335,17 +362,32 @@ def get_analysis(
 
 
 @app.post("/create-checkout-session", tags=["Payments"])
-def create_checkout_session():
+def create_checkout_session(
+    checkout: Optional[CheckoutRequest] = None,
+    user: Optional[Dict[str, Any]] = Depends(get_current_user_optional),
+):
     """
-    Creates a Stripe Checkout session for the Info Tier product.
-    (This remains unchanged from Day 12)
+    Creates a Stripe Checkout session, associating the purchase with the
+    caller's account and requested tier via session metadata so the webhook
+    can provision the entitlement. Authentication is optional; anonymous
+    checkouts complete payment but provision nothing.
     """
     if not STRIPE_SECRET_KEY or not STRIPE_PRICE_ID:
         raise HTTPException(
             status_code=503,
             detail="Payments are not configured. Set STRIPE_SECRET_KEY and STRIPE_PRICE_ID.",
         )
+    tier = (checkout.tier if checkout and checkout.tier else "basic").lower()
+    if tier not in ("basic", "premium"):
+        raise HTTPException(
+            status_code=400,
+            detail="Unknown tier. Choose basic or premium.",
+        )
     try:
+        metadata = {"tier": tier}
+        if user:
+            metadata["user_id"] = user.get("user_id", "")
+            metadata["email"] = user.get("email", "") or ""
         checkout_session = stripe.checkout.Session.create(
             line_items=[
                 {
@@ -354,11 +396,14 @@ def create_checkout_session():
                 },
             ],
             mode="payment",
+            metadata=metadata,
             success_url="http://localhost:8000/success.html",
             cancel_url="http://localhost:8000/cancel.html",
         )
         # Use a 303 See Other redirect, which is standard for POST -> GET redirects
         return RedirectResponse(checkout_session.url, status_code=303)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -386,9 +431,9 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
         # Invalid signature
         raise HTTPException(status_code=400, detail=f"Invalid signature: {e}")
 
-    # --- Idempotency Check ---
+    # --- Idempotency Check (persisted, shared across workers) ---
     event_id = event.get("id")
-    if event_id in PROCESSED_EVENTS:
+    if event_id and _stripe_event_processed(event_id):
         print(f"-> Webhook event {event_id} already processed. Skipping.")
         return {"status": "already processed"}
 
@@ -396,12 +441,25 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         print(f"-> Payment successful for session: {session.get('id')}")
-        # TODO: Provision access to the user (e.g., generate API key)
+        metadata = session.get("metadata", {}) or {}
+        email = metadata.get("email", "")
+        tier = (metadata.get("tier", "") or "").lower()
+        if email and tier in ("basic", "premium"):
+            import auth_store
+
+            try:
+                auth_store.set_user_tier(email, tier)
+                print(f"-> Provisioned {tier} for {email}")
+            except ValueError as e:
+                print(f"-> Could not provision {email}: {e}")
+        else:
+            print("-> No account metadata on session; payment recorded, nothing provisioned.")
     else:
         print(f"-> Unhandled event type: {event['type']}")
 
     # Add the event to our processed set
-    PROCESSED_EVENTS.add(event_id)
+    if event_id:
+        _stripe_event_mark(event_id)
 
     return {"status": "success"}
 
