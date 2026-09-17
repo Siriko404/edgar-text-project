@@ -2,7 +2,7 @@
 Authentication endpoints for Edgar-Text API.
 """
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
 from pydantic import BaseModel, EmailStr
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -14,6 +14,7 @@ from auth import (
     create_jwt_token,
     VALID_API_KEYS
 )
+from ratelimit import enforce_tiered_rate_limit
 from logging_config import get_logger
 from monitoring import metrics
 
@@ -70,10 +71,14 @@ class UserInfoResponse(BaseModel):
 
 
 @auth_router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest):
+async def login(
+    request: LoginRequest, http_request: Request, http_response: Response
+):
     """
     User login endpoint backed by the persisted user store.
+    Throttled per IP against password guessing.
     """
+    enforce_tiered_rate_limit(http_response, None, http_request.client.host)
     logger.info(f"Login attempt for email: {request.email}")
 
     import auth_store
@@ -103,10 +108,14 @@ async def login(request: LoginRequest):
 
 
 @auth_router.post("/signup", response_model=TokenResponse)
-async def signup(request: SignupRequest):
+async def signup(
+    request: SignupRequest, http_request: Request, http_response: Response
+):
     """
     User signup endpoint backed by the persisted user store.
+    Throttled per IP against mass account creation.
     """
+    enforce_tiered_rate_limit(http_response, None, http_request.client.host)
     logger.info(f"Signup attempt for email: {request.email}")
 
     import auth_store
@@ -142,11 +151,16 @@ async def signup(request: SignupRequest):
 @auth_router.post("/api-key", response_model=APIKeyResponse)
 async def create_api_key(
     request: APIKeyRequest,
+    http_request: Request,
+    http_response: Response,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Generate a new API key for the authenticated user.
     """
+    enforce_tiered_rate_limit(
+        http_response, current_user, http_request.client.host
+    )
     logger.info("API key creation requested", extra={
         "user_id": current_user["user_id"],
         "requested_tier": request.tier
@@ -182,10 +196,17 @@ async def create_api_key(
 
 
 @auth_router.get("/me", response_model=UserInfoResponse)
-async def get_user_info(current_user: Dict[str, Any] = Depends(get_current_user)):
+async def get_user_info(
+    http_request: Request,
+    http_response: Response,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """
     Get information about the currently authenticated user.
     """
+    enforce_tiered_rate_limit(
+        http_response, current_user, http_request.client.host
+    )
     logger.info(f"User info requested for: {current_user['user_id']}")
 
     return UserInfoResponse(
@@ -222,12 +243,17 @@ async def get_demo_keys():
 @auth_router.delete("/api-key/{key_id}")
 async def revoke_api_key(
     key_id: str,
+    http_request: Request,
+    http_response: Response,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Revoke an API key.
     In production, this would mark the key as revoked in the database.
     """
+    enforce_tiered_rate_limit(
+        http_response, current_user, http_request.client.host
+    )
     logger.info("API key revocation requested", extra={
         "user_id": current_user["user_id"],
         "key_id": key_id

@@ -2,13 +2,16 @@ import os
 import re
 import sys
 from dotenv import load_dotenv
+
+# Load .env FIRST so every module imported below sees configured values
+# (notably auth.JWT_SECRET_KEY, which is read at import time).
+load_dotenv()
+
 from typing import Dict, Any, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
-import time
-from collections import defaultdict
 
 # Import monitoring and logging
 from logging_config import setup_logging, get_logger
@@ -17,14 +20,17 @@ from monitoring import metrics, PerformanceMonitor, start_background_monitoring
 # Import authentication
 from auth import (
     get_current_user_optional,
-    get_user_rate_limit,
-    initialize_demo_keys
+    initialize_demo_keys,
 )
 from auth_endpoints import auth_router
+from ratelimit import (
+    RATE_LIMIT_REQUESTS,
+    RATE_LIMIT_WINDOW,
+    enforce_tiered_rate_limit,
+    rate_limit_storage,
+)
 
 # --- Application Setup ---
-# Load environment variables from .env file
-load_dotenv()
 
 # Setup logging
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -77,81 +83,8 @@ app.add_middleware(
 )
 
 # --- Rate Limiting ---
-# Tiered per-identity rate limiting. Anonymous callers share a per-IP bucket;
-# authenticated callers get the bucket of their tier (see docs/API.md).
-# Buckets live in the shared disk cache so multiple workers enforce one limit.
-rate_limit_storage = defaultdict(list)
-RATE_LIMIT_REQUESTS = config.RATE_LIMIT_REQUESTS  # requests per window
-RATE_LIMIT_WINDOW = config.RATE_LIMIT_WINDOW  # seconds
-
-
-def _bucket_load(key: str) -> list:
-    try:
-        return list(main.cache.get(f"ratelimit:{key}") or [])
-    except Exception:
-        return list(rate_limit_storage.get(key, []))
-
-
-def _bucket_save(key: str, hits: list) -> None:
-    rate_limit_storage[key] = hits
-    try:
-        main.cache.set(f"ratelimit:{key}", hits, expire=RATE_LIMIT_WINDOW * 2)
-    except Exception as e:
-        logger.warning(f"Could not persist rate bucket {key}: {e}")
-
-
-def check_rate_limit(client_ip: str) -> bool:
-    """Simple in-memory rate limiting (legacy fixed bucket, kept for compat)."""
-    return _check_bucket(f"ip:{client_ip}", RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
-
-
-def _check_bucket(key: str, limit: int, window: int) -> bool:
-    """Record a hit in the named bucket; True when under the limit."""
-    now = time.time()
-    hits = [t for t in _bucket_load(key) if now - t < window]
-
-    # Check if under limit
-    if len(hits) >= limit:
-        _bucket_save(key, hits)
-        return False
-
-    # Add current request
-    _bucket_save(key, hits + [now])
-    return True
-
-
-def _rate_limit_identity(user: Optional[Dict[str, Any]], client_ip: str) -> str:
-    """Bucket key: authenticated identity when present, else caller IP."""
-    if user:
-        return f"{user.get('auth_type', 'auth')}:{user.get('user_id', 'unknown')}"
-    return f"ip:{client_ip}"
-
-
-def enforce_tiered_rate_limit(
-    response: Response, user: Optional[Dict[str, Any]], client_ip: str
-) -> None:
-    """Enforce the caller's tier limit and set X-RateLimit-* headers.
-
-    Raises 429 when the bucket is exhausted; always sets headers.
-    """
-    limit = get_user_rate_limit(user)
-    key = _rate_limit_identity(user, client_ip)
-    now = time.time()
-    hits = [t for t in _bucket_load(key) if now - t < RATE_LIMIT_WINDOW]
-    remaining = max(0, limit - len(hits))
-    reset = int(now + RATE_LIMIT_WINDOW)
-    response.headers["X-RateLimit-Limit"] = str(limit)
-    response.headers["X-RateLimit-Remaining"] = str(remaining)
-    response.headers["X-RateLimit-Reset"] = str(reset)
-    if len(hits) >= limit:
-        _bucket_save(key, hits)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded. Please try again later.",
-        )
-    _bucket_save(key, hits + [now])
-    response.headers["X-RateLimit-Remaining"] = str(max(0, limit - len(hits) - 1))
-
+# Single enforcement point lives in ratelimit.py (imported above).
+# rate_limit_storage is re-exported here so tests can reset buckets.
 
 # --- Load Quantized ONNX Model at Startup ---
 # This is a global variable that holds our model in memory
