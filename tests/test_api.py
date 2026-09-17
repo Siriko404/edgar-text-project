@@ -33,7 +33,11 @@ def mock_sentiment_pipeline():
     # Setup model mock
     mock_outputs = MagicMock()
     mock_outputs.logits.argmax.return_value.item.return_value = 2  # Positive
-    mock_outputs.logits.softmax.return_value = [[0.1, 0.2, 0.7]]  # Positive with 0.7 confidence
+    mock_probability = MagicMock()
+    mock_probability.item.return_value = 0.7
+    mock_outputs.logits.softmax.return_value = [
+        [0.1, 0.2, mock_probability]
+    ]  # Positive with 0.7 confidence
     mock_pipeline["model"].return_value = mock_outputs
     mock_pipeline["model"].config.id2label = {0: "negative", 1: "neutral", 2: "positive"}
 
@@ -142,7 +146,7 @@ class TestCompanyAnalysis:
         """Test company analysis with invalid ticker."""
         mock_analyze.side_effect = ValueError("Invalid ticker")
 
-        response = client.get("/analyze/INVALID")
+        response = client.get("/analyze/INVAL")
 
         assert response.status_code == 404
         assert "Invalid ticker" in response.json()["detail"]
@@ -168,7 +172,7 @@ class TestPaymentEndpoints:
         mock_session.url = "https://checkout.stripe.com/session123"
         mock_create.return_value = mock_session
 
-        response = client.post("/create-checkout-session")
+        response = client.post("/create-checkout-session", follow_redirects=False)
 
         assert response.status_code == 303  # Redirect status
         assert response.headers["location"] == "https://checkout.stripe.com/session123"

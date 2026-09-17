@@ -42,11 +42,14 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
-# Check for required secrets
+# Check for required secrets (warn at import; endpoints fail explicitly)
 if not STRIPE_SECRET_KEY:
-    raise ValueError("STRIPE_SECRET_KEY not found. Ensure it is in your .env file.")
-
-stripe.api_key = STRIPE_SECRET_KEY
+    logger.warning(
+        "STRIPE_SECRET_KEY not found. Payment endpoints will return 503 "
+        "until it is configured. Ensure it is in your .env file."
+    )
+else:
+    stripe.api_key = STRIPE_SECRET_KEY
 
 # API Metadata
 app = FastAPI(
@@ -76,7 +79,7 @@ app.add_middleware(
 # Trusted host middleware (prevent host header attacks)
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "*.example.com"],  # Update for production
+    allowed_hosts=["localhost", "127.0.0.1", "testserver", "*.example.com"],  # Update for production
 )
 
 # --- Rate Limiting ---
@@ -280,6 +283,8 @@ def get_analysis(ticker: str, client_request: Request):
         analysis_result = main.analyze_company(ticker.upper())
         return analysis_result
     except ValueError as e:
+        if "SEC_API_KEY" in str(e):
+            raise HTTPException(status_code=500, detail=str(e))
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(
@@ -293,6 +298,11 @@ def create_checkout_session():
     Creates a Stripe Checkout session for the Info Tier product.
     (This remains unchanged from Day 12)
     """
+    if not STRIPE_SECRET_KEY or not STRIPE_PRICE_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="Payments are not configured. Set STRIPE_SECRET_KEY and STRIPE_PRICE_ID.",
+        )
     try:
         checkout_session = stripe.checkout.Session.create(
             line_items=[
@@ -317,6 +327,11 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None))
     Handles incoming webhooks from Stripe to manage payment events.
     (This remains unchanged from Day 13)
     """
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="Payments are not configured. Set STRIPE_WEBHOOK_SECRET.",
+        )
     payload = await request.body()
     try:
         event = stripe.Webhook.construct_event(

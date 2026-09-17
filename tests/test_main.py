@@ -16,7 +16,7 @@ from main import (
 class TestLMDictionary:
     """Test Loughran-McDonald dictionary loading and processing."""
 
-    @patch("builtins.open", new_callable=mock_open, read_data="word,0,0,0,0,0,0,1,1\ntest,0,0,0,0,0,1,0,0\n")
+    @patch("builtins.open", new_callable=mock_open, read_data="Word,Sequence Number,Word Count,Word Proportion,Average Proportion,Std Dev,Negative,Positive,Uncertainty\nword,0,0,0,0,0,0,1,1\ntest,0,0,0,0,0,1,0,0\n")
     def test_load_lm_dictionary_success(self, mock_file):
         """Test successful loading of LM dictionary."""
         positive_words, negative_words = load_lm_dictionary()
@@ -28,11 +28,9 @@ class TestLMDictionary:
 
     @patch("builtins.open", side_effect=FileNotFoundError())
     def test_load_lm_dictionary_file_not_found(self, mock_file):
-        """Test handling of missing dictionary file."""
-        positive_words, negative_words = load_lm_dictionary()
-
-        assert positive_words == set()
-        assert negative_words == set()
+        """Test explicit error when the dictionary file is missing."""
+        with pytest.raises(FileNotFoundError, match="LM dictionary not found"):
+            load_lm_dictionary()
 
     def test_calculate_lm_sentiment(self):
         """Test sentiment calculation with word counts."""
@@ -59,8 +57,8 @@ class TestLMDictionary:
 class TestSECAPI:
     """Test SEC API integration functions."""
 
-    @patch("main.queryApi.get_filings")
-    def test_get_latest_10k_filings_success(self, mock_get_filings):
+    @patch("main._get_query_api")
+    def test_get_latest_10k_filings_success(self, mock_get_query_api):
         """Test successful retrieval of 10-K filings."""
         mock_response = {
             "filings": [
@@ -68,7 +66,7 @@ class TestSECAPI:
                 {"filedAt": "2023-01-01", "linkToFilingDetails": "url2"},
             ]
         }
-        mock_get_filings.return_value = mock_response
+        mock_get_query_api.return_value.get_filings.return_value = mock_response
 
         result = get_latest_10k_filings("AAPL")
 
@@ -76,29 +74,33 @@ class TestSECAPI:
         assert result[0]["filedAt"] == "2024-01-01"
 
         # Verify query structure
-        mock_get_filings.assert_called_once()
-        call_args = mock_get_filings.call_args[0][0]
+        mock_get_query_api.return_value.get_filings.assert_called_once()
+        call_args = mock_get_query_api.return_value.get_filings.call_args[0][0]
         assert 'ticker:AAPL' in call_args["query"]["query_string"]["query"]
         assert 'formType:"10-K"' in call_args["query"]["query_string"]["query"]
 
-    @patch("main.queryApi.get_filings")
-    def test_get_latest_10k_filings_empty_response(self, mock_get_filings):
+    @patch("main._get_query_api")
+    def test_get_latest_10k_filings_empty_response(self, mock_get_query_api):
         """Test handling of empty SEC API response."""
-        mock_get_filings.return_value = {"filings": []}
+        mock_get_query_api.return_value.get_filings.return_value = {"filings": []}
 
         result = get_latest_10k_filings("INVALID")
 
         assert result == []
 
-    @patch("main.extractorApi.get_section")
-    def test_get_risk_factors_text_success(self, mock_get_section):
+    @patch("main._get_extractor_api")
+    def test_get_risk_factors_text_success(self, mock_get_extractor_api):
         """Test successful extraction of risk factors text."""
-        mock_get_section.return_value = "Sample risk factors text."
+        mock_get_extractor_api.return_value.get_section.return_value = (
+            "Sample risk factors text."
+        )
 
         result = get_risk_factors_text("https://example.com/filing")
 
         assert result == "Sample risk factors text."
-        mock_get_section.assert_called_once_with("https://example.com/filing", "1A", "text")
+        mock_get_extractor_api.return_value.get_section.assert_called_once_with(
+            "https://example.com/filing", "1A", "text"
+        )
 
 
 class TestAnalyzeCompany:
@@ -142,7 +144,7 @@ class TestAnalyzeCompany:
     @patch("main.get_latest_10k_filings")
     def test_analyze_company_insufficient_filings(self, mock_get_filings, mock_load_dict):
         """Test handling of insufficient filings."""
-        mock_load_dict.return_value = (set(), set())
+        mock_load_dict.return_value = ({"good"}, {"bad"})
         mock_get_filings.return_value = [{"filedAt": "2024-01-01"}]  # Only one filing
 
         result = analyze_company("INVALID")
@@ -151,13 +153,23 @@ class TestAnalyzeCompany:
         assert "Could not retrieve two 10-K filings" in result["error"]
 
     @patch("main.load_lm_dictionary")
+    def test_analyze_company_missing_dictionary(self, mock_load_dict):
+        """Test explicit error when the dictionary asset is missing."""
+        mock_load_dict.side_effect = FileNotFoundError("LM dictionary not found at x")
+
+        result = analyze_company("AAPL")
+
+        assert "error" in result
+        assert "LM dictionary not found" in result["error"]
+
+    @patch("main.load_lm_dictionary")
     @patch("main.get_latest_10k_filings")
     @patch("main.get_risk_factors_text")
     def test_analyze_company_extraction_failure(
         self, mock_get_risk_factors, mock_get_filings, mock_load_dict
     ):
         """Test handling of risk factors extraction failure."""
-        mock_load_dict.return_value = (set(), set())
+        mock_load_dict.return_value = ({"good"}, {"bad"})
         mock_get_filings.return_value = [
             {"linkToFilingDetails": "url1"},
             {"linkToFilingDetails": "url2"},
@@ -170,7 +182,7 @@ class TestAnalyzeCompany:
         assert "Failed to extract risk factors" in result["error"]
 
 
-# Integration test (requires actual dependencies)
+# Integration test (requires actual dependencies, opt-in via --integration)
 class TestIntegration:
     """Integration tests that require environment setup."""
 
@@ -186,15 +198,5 @@ class TestIntegration:
             if positive_words or negative_words:
                 assert len(positive_words) > 0
                 assert len(negative_words) > 0
-        except Exception:
+        except FileNotFoundError:
             pytest.skip("LM dictionary file not available")
-
-
-def pytest_addoption(parser):
-    """Add command line options for pytest."""
-    parser.addoption(
-        "--integration",
-        action="store_true",
-        default=False,
-        help="Run integration tests"
-    )

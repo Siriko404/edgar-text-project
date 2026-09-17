@@ -6,14 +6,50 @@ from sec_api import ExtractorApi, QueryApi
 
 # --- SETUP ---
 
-# Initialize SEC API clients and cache
-SEC_API_KEY = os.getenv("SEC_API_KEY")
-if not SEC_API_KEY:
-    raise ValueError("SEC_API_KEY not found. Ensure it is in your .env file.")
+# SEC API clients are created lazily so importing this module never
+# requires credentials; analyze_company() reports missing keys explicitly.
+_query_api = None
+_extractor_api = None
 
-queryApi = QueryApi(api_key=SEC_API_KEY)
-extractorApi = ExtractorApi(api_key=SEC_API_KEY)
-cache = Cache("cache_directory")
+
+def _get_query_api():
+    """Return a QueryApi client, creating it on first use."""
+    global _query_api
+    if _query_api is None:
+        from sec_api import QueryApi
+
+        api_key = os.getenv("SEC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "SEC_API_KEY not found. Ensure it is in your .env file."
+            )
+        _query_api = QueryApi(api_key=api_key)
+    return _query_api
+
+
+def _get_extractor_api():
+    """Return an ExtractorApi client, creating it on first use."""
+    global _extractor_api
+    if _extractor_api is None:
+        from sec_api import ExtractorApi
+
+        api_key = os.getenv("SEC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "SEC_API_KEY not found. Ensure it is in your .env file."
+            )
+        _extractor_api = ExtractorApi(api_key=api_key)
+    return _extractor_api
+
+
+def _get_cache():
+    """Return the disk cache, creating it on first use."""
+    from diskcache import Cache
+
+    return Cache("cache_directory")
+
+
+cache = _get_cache()
 
 
 # --- HELPER & CORE ANALYSIS FUNCTIONS ---
@@ -71,7 +107,7 @@ def get_latest_10k_filings(ticker):
         "sort": [{"filedAt": {"order": "desc"}}],
     }
     print(f"Querying SEC API for {ticker} filings...")
-    response = queryApi.get_filings(query)
+    response = _get_query_api().get_filings(query)
     return response.get("filings", [])
 
 
@@ -81,7 +117,7 @@ def get_risk_factors_text(filing_url):
     print(
         f"Extracting 'Item 1A' from: {filing_url} using professional-grade Extractor API."
     )
-    return extractorApi.get_section(filing_url, "1A", "text")
+    return _get_extractor_api().get_section(filing_url, "1A", "text")
 
 
 def calculate_lm_sentiment(text, positive_words, negative_words):
