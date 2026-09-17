@@ -19,6 +19,11 @@ logger = get_logger("edgar_text.auth")
 
 # JWT Configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
+if not os.getenv("JWT_SECRET_KEY"):
+    logger.warning(
+        "JWT_SECRET_KEY not set; using an ephemeral secret. "
+        "Set JWT_SECRET_KEY in .env for restarts and multi-worker deployments."
+    )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
 
