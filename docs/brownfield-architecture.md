@@ -10,6 +10,19 @@ This document captures the CURRENT STATE of the Edgar-Text codebase, including t
 
 Comprehensive documentation of entire system - no PRD provided.
 
+### September 2026 Refresh (supersedes stale claims below)
+
+Since v1.0, the gaps listed under Technical Debt / Testing / Security were
+closed: Pydantic v2 compatibility (`pattern`, `field_validator`); centralized
+`config.py` + full `.env.example`; configurable `LM_DICTIONARY_PATH` /
+`MODEL_PATH` with explicit missing-asset errors and `scripts/check_assets.py`;
+hermetic pytest suite (`tests/`, 38 tests, `--integration` opt-in); tiered
+rate limits with `X-RateLimit-*` headers; file-persisted users/API keys
+(`auth_store.py`); Stripe checkout metadata + webhook provisioning with
+persisted idempotency; env-driven CORS/trusted-hosts/limits and corrected
+multi-worker deployment docs. Where sections below still say these are
+missing, treat this note as authoritative.
+
 ### Change Log
 
 | Date       | Version | Description                 | Author         |

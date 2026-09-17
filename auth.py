@@ -190,7 +190,7 @@ def verify_api_key(api_key: str) -> APIKeyData:
             created_at=datetime.fromisoformat(stored["created_at"]),
             last_used=datetime.utcnow(),
         )
-        logger.info(f"Valid API key used", extra={
+        logger.info("Valid API key used", extra={
             "key_prefix": api_key[:12] + "...",
             "user_id": key_data.user_id,
             "tier": key_data.tier
@@ -292,7 +292,7 @@ def require_tier(required_tier: str):
         required_tier_level = tier_hierarchy.get(required_tier, 999)
 
         if user_tier_level < required_tier_level:
-            logger.warning(f"Insufficient tier access", extra={
+            logger.warning("Insufficient tier access", extra={
                 "user_id": current_user["user_id"],
                 "user_tier": current_user["tier"],
                 "required_tier": required_tier

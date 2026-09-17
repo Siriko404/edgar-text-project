@@ -21,7 +21,11 @@ class TestPaymentEntitlement:
     def test_signup_premium_blocked_without_payment(self, isolated_client):
         response = isolated_client.post(
             "/auth/signup",
-            json={"email": "rich@example.com", "password": "pw-123456", "tier": "premium"},
+            json={
+                "email": "rich@example.com",
+                "password": "pw-123456",
+                "tier": "premium",
+            },
         )
         assert response.status_code == 403
         assert "payment" in response.json()["detail"].lower()
@@ -34,7 +38,11 @@ class TestPaymentEntitlement:
 
         signup = isolated_client.post(
             "/auth/signup",
-            json={"email": "buyer@example.com", "password": "pw-123456", "tier": "free"},
+            json={
+                "email": "buyer@example.com",
+                "password": "pw-123456",
+                "tier": "free",
+            },
         )
         assert signup.status_code == 200
         token = isolated_client.post(
@@ -59,7 +67,11 @@ class TestPaymentEntitlement:
 
         isolated_client.post(
             "/auth/signup",
-            json={"email": "paying@example.com", "password": "pw-123456", "tier": "free"},
+            json={
+                "email": "paying@example.com",
+                "password": "pw-123456",
+                "tier": "free",
+            },
         )
         assert auth_store.get_user_by_email("paying@example.com")["tier"] == "free"
 
@@ -74,15 +86,11 @@ class TestPaymentEntitlement:
             },
         }
         headers = {"stripe-signature": "test_signature"}
-        first = isolated_client.post(
-            "/webhook", content=b"payload", headers=headers
-        )
+        first = isolated_client.post("/webhook", content=b"payload", headers=headers)
         assert first.status_code == 200
         assert first.json()["status"] == "success"
         assert auth_store.get_user_by_email("paying@example.com")["tier"] == "premium"
 
-        second = isolated_client.post(
-            "/webhook", content=b"payload", headers=headers
-        )
+        second = isolated_client.post("/webhook", content=b"payload", headers=headers)
         assert second.status_code == 200
         assert second.json()["status"] == "already processed"

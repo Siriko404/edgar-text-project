@@ -9,7 +9,6 @@ from datetime import datetime
 
 from auth import (
     get_current_user,
-    get_current_user_optional,
     require_tier,
     generate_api_key,
     create_jwt_token,
@@ -152,7 +151,7 @@ async def create_api_key(
     """
     Generate a new API key for the authenticated user.
     """
-    logger.info(f"API key creation requested", extra={
+    logger.info("API key creation requested", extra={
         "user_id": current_user["user_id"],
         "requested_tier": request.tier
     })
@@ -233,7 +232,7 @@ async def revoke_api_key(
     Revoke an API key.
     In production, this would mark the key as revoked in the database.
     """
-    logger.info(f"API key revocation requested", extra={
+    logger.info("API key revocation requested", extra={
         "user_id": current_user["user_id"],
         "key_id": key_id
     })

@@ -87,11 +87,17 @@ A dual-mode financial text analysis API that combines traditional sentiment anal
    STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
    ```
 
-5. **Download ML models**:
+5. **Verify analysis assets**:
    ```bash
-   # Models are auto-downloaded on first run
-   # Ensure models/ directory has proper permissions
+   # Checks the LM dictionary and the ONNX model directory
+   python scripts/check_assets.py
    ```
+   - Dictionary defaults to `data/Loughran-McDonald_MasterDictionary_1993-2024.csv`
+     (override with `LM_DICTIONARY_PATH`).
+   - Model defaults to `./models/distilfinbert_onnx_q8` (override with
+     `MODEL_PATH`). The directory is git-ignored; place the quantized
+     `model_quantized.onnx` plus tokenizer files there. Missing assets fail
+     with an explicit error — the API never silently reports zero sentiment.
 
 ### Running the Application
 
@@ -193,11 +199,18 @@ python benchmark_finbert.py
 edgar-text/
 ├── api.py                 # FastAPI web service
 ├── main.py               # Core analysis engine
-├── benchmark_finbert.py  # Performance testing
-├── data/                 # Loughran-McDonald dictionary
-├── models/               # ONNX ML models
+├── auth.py               # JWT/API-key verification (persisted store)
+├── auth_endpoints.py     # Signup/login/keys with tier enforcement
+├── auth_store.py         # File-persisted users and API keys
+├── config.py             # Centralized environment configuration
+├── benchmark_finbert.py  # Performance testing (MODEL_PATH aware)
+├── scripts/
+│   └── check_assets.py   # Verify dictionary + model assets
+├── data/                 # Loughran-McDonald dictionary + auth store
+├── models/               # ONNX ML models (git-ignored, provisioned locally)
+├── tests/                # Hermetic pytest suite (no real creds needed)
 ├── docs/                 # Documentation
-├── .env                  # Environment configuration
+├── .env.example          # Environment template (copy to .env)
 └── cache_directory/      # Runtime cache (auto-created)
 ```
 
@@ -211,23 +224,29 @@ edgar-text/
 ## 🔒 Security Considerations
 
 **Current Implementation**:
-- Environment-based secret management
-- Stripe webhook signature verification
-- Basic error handling
+- Environment-based secret management (see `config.py` + `.env.example`)
+- Stripe webhook signature verification with persisted idempotency
+- Tiered rate limiting (10/100/1000/10000 per hour) with `X-RateLimit-*` headers
+- Input validation (length/content checks, ticker format)
+- File-persisted users/API keys; premium provisioned by webhook
 
 **Production Recommendations**:
-- Add rate limiting
-- Implement input validation
-- Configure CORS policies
+- Set a stable `JWT_SECRET_KEY` shared by all workers
+- Configure CORS origins and trusted hosts for your domain
+- Share `data/`, `cache_directory/`, `models/` across workers
 - Add request size limits
 - Set up proper logging
 
 ## 🚨 Known Limitations
 
-- **No Test Suite**: Testing infrastructure needs implementation
-- **Manual Deployment**: No CI/CD pipeline configured
-- **Limited Error Handling**: Basic error responses
-- **No Authentication**: Open API endpoints (implement as needed)
+- **Model files are local**: `models/` is git-ignored; provision it per machine
+  and verify with `python scripts/check_assets.py`.
+- **External keys required**: SEC and Stripe features need real credentials;
+  unit tests run hermetically with mocks (`pytest -m "not integration"`).
+- **File-backed state**: users, API keys, webhook ids, and rate buckets persist
+  in `data/` + `cache_directory/` — back them up and share them across workers.
+- **Premium needs payment**: signup offers `free`/`basic`; `premium` is granted
+  by the Stripe webhook after checkout (re-login refreshes the tier).
 
 ## 📈 Monitoring & Debugging
 

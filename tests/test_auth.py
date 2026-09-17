@@ -83,7 +83,11 @@ class TestDurableAuth:
 
         isolated_client.post(
             "/auth/signup",
-            json={"email": "filecheck@example.com", "password": "pw-123456", "tier": "basic"},
+            json={
+                "email": "filecheck@example.com",
+                "password": "pw-123456",
+                "tier": "basic",
+            },
         )
         store_file = os.getenv("AUTH_STORE_PATH")
         assert store_file and os.path.isfile(store_file)
@@ -91,8 +95,12 @@ class TestDurableAuth:
             data = json.load(f)
         assert "filecheck@example.com" in data["users"]
         assert data["users"]["filecheck@example.com"]["tier"] == "basic"
-        assert "password" not in data["users"]["filecheck@example.com"].get(
-            "password_hash", "password"
-        ).lower() or True  # hash stored, never plaintext
+        assert (
+            "password"
+            not in data["users"]["filecheck@example.com"]
+            .get("password_hash", "password")
+            .lower()
+            or True
+        )  # hash stored, never plaintext
         stored_hash = data["users"]["filecheck@example.com"]["password_hash"]
         assert "pw-123456" not in stored_hash

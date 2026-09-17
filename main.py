@@ -16,8 +16,6 @@ def _get_query_api():
     """Return a QueryApi client, creating it on first use."""
     global _query_api
     if _query_api is None:
-        from sec_api import QueryApi
-
         api_key = os.getenv("SEC_API_KEY")
         if not api_key:
             raise ValueError(
@@ -31,8 +29,6 @@ def _get_extractor_api():
     """Return an ExtractorApi client, creating it on first use."""
     global _extractor_api
     if _extractor_api is None:
-        from sec_api import ExtractorApi
-
         api_key = os.getenv("SEC_API_KEY")
         if not api_key:
             raise ValueError(
@@ -44,8 +40,6 @@ def _get_extractor_api():
 
 def _get_cache():
     """Return the disk cache, creating it on first use."""
-    from diskcache import Cache
-
     return Cache("cache_directory")
 
 

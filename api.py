@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import stripe
 from dotenv import load_dotenv
 from typing import Dict, Any, Optional
@@ -36,6 +37,7 @@ logger = get_logger("edgar_text.api")
 # This import must happen AFTER load_dotenv() to ensure its own environment
 # variables are loaded. We add a comment to tell flake8 to ignore this style rule.
 import main  # noqa: E402
+import config  # noqa: E402
 
 # --- Configuration & Model Loading ---
 # API Keys and secrets
@@ -67,13 +69,9 @@ app.include_router(auth_router)
 # --- Security Middleware ---
 # Origins and hosts are configured via CORS_ORIGINS / TRUSTED_HOSTS.
 # "testserver" is accepted only under pytest so TestClient works.
-import sys as _sys
-
-import config as _config
-
-_cors_origins = list(_config.CORS_ORIGINS)
-_trusted_hosts = list(_config.TRUSTED_HOSTS)
-if "pytest" in _sys.modules and "testserver" not in _trusted_hosts:
+_cors_origins = list(config.CORS_ORIGINS)
+_trusted_hosts = list(config.TRUSTED_HOSTS)
+if "pytest" in sys.modules and "testserver" not in _trusted_hosts:
     _trusted_hosts.append("testserver")
 
 # CORS configuration
@@ -96,8 +94,8 @@ app.add_middleware(
 # authenticated callers get the bucket of their tier (see docs/API.md).
 # Buckets live in the shared disk cache so multiple workers enforce one limit.
 rate_limit_storage = defaultdict(list)
-RATE_LIMIT_REQUESTS = _config.RATE_LIMIT_REQUESTS  # requests per window
-RATE_LIMIT_WINDOW = _config.RATE_LIMIT_WINDOW  # seconds
+RATE_LIMIT_REQUESTS = config.RATE_LIMIT_REQUESTS  # requests per window
+RATE_LIMIT_WINDOW = config.RATE_LIMIT_WINDOW  # seconds
 
 
 def _bucket_load(key: str) -> list:

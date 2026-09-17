@@ -29,12 +29,8 @@ JWT_SECRET_GENERATED = not bool(JWT_SECRET_KEY)
 JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
 
 # --- Production middleware / rate limiting ---
-CORS_ORIGINS = _get_list(
-    "CORS_ORIGINS", "http://localhost:3000,http://localhost:8000"
-)
-TRUSTED_HOSTS = _get_list(
-    "TRUSTED_HOSTS", "localhost,127.0.0.1,*.example.com"
-)
+CORS_ORIGINS = _get_list("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000")
+TRUSTED_HOSTS = _get_list("TRUSTED_HOSTS", "localhost,127.0.0.1,*.example.com")
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "100"))
 RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "3600"))
 ANONYMOUS_RATE_LIMIT = int(os.getenv("ANONYMOUS_RATE_LIMIT", "10"))

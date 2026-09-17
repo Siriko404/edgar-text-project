@@ -9,4 +9,11 @@
 | ONNX INT8    | 110 MB    | 0.842              | quantized, AVX-2, same machine |
 
 
+Run it with:
+
+```bash
+MODEL_PATH=./models/distilfinbert_onnx_q8 python benchmark_finbert.py
+```
+
+
 
