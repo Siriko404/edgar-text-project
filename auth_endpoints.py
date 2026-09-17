@@ -12,7 +12,6 @@ from auth import (
     require_tier,
     generate_api_key,
     create_jwt_token,
-    VALID_API_KEYS
 )
 from ratelimit import enforce_tiered_rate_limit
 from logging_config import get_logger
@@ -218,28 +217,6 @@ async def get_user_info(
     )
 
 
-@auth_router.get("/demo-keys")
-async def get_demo_keys():
-    """
-    Get demo API keys for testing (development only).
-    In production, this endpoint should be removed.
-    """
-    if len(VALID_API_KEYS) == 0:
-        from auth import initialize_demo_keys
-        demo_keys = initialize_demo_keys()
-    else:
-        demo_keys = list(VALID_API_KEYS)
-
-    logger.info("Demo keys requested")
-    metrics.record_counter("auth_demo_keys_requested")
-
-    return {
-        "demo_keys": demo_keys[:3],  # Only show first 3 for security
-        "note": "These are demo keys for testing. In production, use proper authentication.",
-        "usage": "Include any of these keys in the Authorization header as 'Bearer <key>'"
-    }
-
-
 @auth_router.delete("/api-key/{key_id}")
 async def revoke_api_key(
     key_id: str,
@@ -259,28 +236,29 @@ async def revoke_api_key(
         "key_id": key_id
     })
 
-    # Demo implementation - in production, mark as revoked in database
+    # Owner-only: a caller can revoke only keys minted for their account.
+    # Unknown and foreign ids both report 404 to avoid existence oracles.
     import auth_store
 
-    revoked = auth_store.delete_api_key_by_id(key_id)
-    if not revoked:
-        # Legacy fallback for pre-persistence in-memory keys
-        for api_key in list(VALID_API_KEYS):
-            if key_id in api_key:
-                VALID_API_KEYS.remove(api_key)
-                revoked = True
-                break
-
-    if revoked:
-        metrics.record_counter("auth_api_key_revoked")
-        logger.info(f"API key revoked for user: {current_user['user_id']}")
-        return {"message": "API key revoked successfully"}
-    else:
-        metrics.record_counter("auth_api_key_revoke_failed")
+    found = auth_store.find_api_key_by_id(key_id)
+    if found is None or found["user_id"] != current_user["user_id"]:
+        if found is not None:
+            logger.warning("Cross-account revoke attempt", extra={
+                "user_id": current_user["user_id"],
+                "key_id": key_id,
+            })
+            metrics.record_counter("auth_api_key_revoke_denied")
+        else:
+            metrics.record_counter("auth_api_key_revoke_failed")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="API key not found"
         )
+
+    auth_store.delete_api_key_by_lookup(found["_lookup"])
+    metrics.record_counter("auth_api_key_revoked")
+    logger.info(f"API key revoked for user: {current_user['user_id']}")
+    return {"message": "API key revoked successfully"}
 
 
 # Premium tier example endpoint

@@ -87,7 +87,7 @@ class TestAuthStoreEdges:
             }
         )
         assert auth_store.get_api_key("edgar_abc")["user_id"] == "u1"
-        assert auth_store.list_api_keys() == ["edgar_abc"]
+        assert auth_store.list_api_keys() == ["abc"]
         auth_store.touch_api_key("edgar_abc", "2025-02-01T00:00:00")
         assert auth_store.delete_api_key_by_id("abc") is True
         assert auth_store.delete_api_key_by_id("abc") is False

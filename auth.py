@@ -29,7 +29,6 @@ JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
 
 # API Key Configuration
 API_KEY_PREFIX = "edgar_"
-VALID_API_KEYS = set()  # In production, load from database
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
@@ -73,7 +72,7 @@ def generate_api_key(user_id: str, tier: str = "free") -> str:
         created_at=datetime.utcnow()
     )
 
-    # Persist for all workers/restarts; mirror in memory for compat
+    # Persist (hashed lookup; plaintext never stored). Shown once to caller.
     auth_store.save_api_key({
         "api_key": api_key,
         "key_id": key_data.key_id,
@@ -83,7 +82,6 @@ def generate_api_key(user_id: str, tier: str = "free") -> str:
         "created_at": key_data.created_at.isoformat(),
         "last_used": None,
     })
-    VALID_API_KEYS.add(api_key)
 
     logger.info(f"Generated API key for user {user_id}", extra={
         "user_id": user_id,
@@ -178,45 +176,32 @@ def verify_api_key(api_key: str) -> APIKeyData:
         )
 
     stored = auth_store.get_api_key(api_key)
-    if stored is not None:
-        auth_store.touch_api_key(api_key, datetime.utcnow().isoformat())
-        key_data = APIKeyData(
-            key_id=stored["key_id"],
-            user_id=stored["user_id"],
-            tier=stored.get("tier", "free"),
-            rate_limit=stored.get(
-                "rate_limit", _get_rate_limit_for_tier(stored.get("tier", "free"))
-            ),
-            created_at=datetime.fromisoformat(stored["created_at"]),
-            last_used=datetime.utcnow(),
+    if stored is None:
+        logger.warning(f"API key not found: {api_key[:12]}...")
+        metrics.record_counter("auth_api_key_not_found")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
         )
-        logger.info("Valid API key used", extra={
-            "key_prefix": api_key[:12] + "...",
-            "user_id": key_data.user_id,
-            "tier": key_data.tier
-        })
-        metrics.record_counter("auth_api_key_success", labels={"tier": key_data.tier})
-        return key_data
 
-    # Legacy fallback for keys minted before persistence existed
-    if api_key in VALID_API_KEYS:
-        key_data = APIKeyData(
-            key_id=api_key[len(API_KEY_PREFIX):],
-            user_id="demo_user",
-            tier="basic",
-            rate_limit=1000,
-            created_at=datetime.utcnow() - timedelta(days=30),
-            last_used=datetime.utcnow()
-        )
-        metrics.record_counter("auth_api_key_success", labels={"tier": key_data.tier})
-        return key_data
-
-    logger.warning(f"API key not found: {api_key[:12]}...")
-    metrics.record_counter("auth_api_key_not_found")
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid API key"
+    auth_store.touch_api_key(api_key, datetime.utcnow().isoformat())
+    key_data = APIKeyData(
+        key_id=stored["key_id"],
+        user_id=stored["user_id"],
+        tier=stored.get("tier", "free"),
+        rate_limit=stored.get(
+            "rate_limit", _get_rate_limit_for_tier(stored.get("tier", "free"))
+        ),
+        created_at=datetime.fromisoformat(stored["created_at"]),
+        last_used=datetime.utcnow(),
     )
+    logger.info("Valid API key used", extra={
+        "key_prefix": api_key[:12] + "...",
+        "user_id": key_data.user_id,
+        "tier": key_data.tier
+    })
+    metrics.record_counter("auth_api_key_success", labels={"tier": key_data.tier})
+    return key_data
 
 
 async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> Dict[str, Any]:

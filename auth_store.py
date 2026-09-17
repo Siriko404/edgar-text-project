@@ -4,6 +4,8 @@ Default location ``./data/auth_store.json`` (override with AUTH_STORE_PATH).
 The file is JSON ``{"users": {...}, "api_keys": {...}}``. Every mutation
 rewrites the whole file, so entries are visible to all worker processes
 on the next read. Passwords are stored as PBKDF2 hashes, never plaintext.
+API keys are stored under their SHA-256 lookup hash, never plaintext: the
+full key is shown once at creation and cannot be recovered from the file.
 """
 
 import hashlib
@@ -120,9 +122,13 @@ def set_user_tier(email: str, tier: str) -> dict:
 
 
 def save_api_key(record: dict) -> None:
-    """Persist an API key record under its full key string."""
+    """Persist an API key record under its SHA-256 lookup hash.
+
+    The plaintext key itself is never written to disk.
+    """
     data = load_store()
-    data["api_keys"][record["api_key"]] = {
+    lookup = hashlib.sha256(record["api_key"].encode("utf-8")).hexdigest()
+    data["api_keys"][lookup] = {
         "key_id": record["key_id"],
         "user_id": record["user_id"],
         "tier": record["tier"],
@@ -134,26 +140,48 @@ def save_api_key(record: dict) -> None:
 
 
 def get_api_key(api_key: str) -> dict | None:
-    return load_store()["api_keys"].get(api_key)
+    """Look up a key record by hashing the presented key."""
+    lookup = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    record = load_store()["api_keys"].get(lookup)
+    if record is None:
+        return None
+    return {**record, "_lookup": lookup}
 
 
 def touch_api_key(api_key: str, timestamp: str) -> None:
     data = load_store()
-    if api_key in data["api_keys"]:
-        data["api_keys"][api_key]["last_used"] = timestamp
+    lookup = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    if lookup in data["api_keys"]:
+        data["api_keys"][lookup]["last_used"] = timestamp
         _save_store(data)
+
+
+def find_api_key_by_id(key_id: str) -> dict | None:
+    """Find the first record whose key_id contains key_id (for revocation)."""
+    for lookup, record in load_store()["api_keys"].items():
+        if key_id in record.get("key_id", ""):
+            return {**record, "_lookup": lookup}
+    return None
+
+
+def delete_api_key_by_lookup(lookup: str) -> bool:
+    """Remove a key by its store lookup; True when one was removed."""
+    data = load_store()
+    if lookup in data["api_keys"]:
+        del data["api_keys"][lookup]
+        _save_store(data)
+        return True
+    return False
 
 
 def delete_api_key_by_id(key_id: str) -> bool:
     """Remove the first key containing key_id; True when one was removed."""
-    data = load_store()
-    for full_key in list(data["api_keys"]):
-        if key_id in full_key:
-            del data["api_keys"][full_key]
-            _save_store(data)
-            return True
-    return False
+    found = find_api_key_by_id(key_id)
+    if found is None:
+        return False
+    return delete_api_key_by_lookup(found["_lookup"])
 
 
 def list_api_keys() -> list:
-    return list(load_store()["api_keys"])
+    """Return key_id prefixes (never secrets)."""
+    return [r.get("key_id") for r in load_store()["api_keys"].values()]

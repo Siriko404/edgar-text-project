@@ -91,16 +91,87 @@ class TestDurableAuth:
         )
         store_file = os.getenv("AUTH_STORE_PATH")
         assert store_file and os.path.isfile(store_file)
+        key_resp = isolated_client.post(
+            "/auth/login",
+            json={"email": "filecheck@example.com", "password": "pw-123456"},
+        )
+        token = key_resp.json()["access_token"]
+        created = isolated_client.post(
+            "/auth/api-key",
+            json={"tier": "basic"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        full_key = created.json()["api_key"]
         with open(store_file, encoding="utf-8") as f:
-            data = json.load(f)
+            raw = f.read()
+        data = json.loads(raw)
         assert "filecheck@example.com" in data["users"]
         assert data["users"]["filecheck@example.com"]["tier"] == "basic"
-        assert (
-            "password"
-            not in data["users"]["filecheck@example.com"]
-            .get("password_hash", "password")
-            .lower()
-            or True
-        )  # hash stored, never plaintext
         stored_hash = data["users"]["filecheck@example.com"]["password_hash"]
         assert "pw-123456" not in stored_hash
+        # Plaintext secrets never touch disk
+        assert "pw-123456" not in raw
+        assert full_key not in raw
+
+    def test_revoke_own_key(self, isolated_client):
+        isolated_client.post(
+            "/auth/signup",
+            json={
+                "email": "owner@example.com",
+                "password": "pw-123456",
+                "tier": "free",
+            },
+        )
+        token = isolated_client.post(
+            "/auth/login",
+            json={"email": "owner@example.com", "password": "pw-123456"},
+        ).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        key_id = isolated_client.post(
+            "/auth/api-key", json={"tier": "free"}, headers=headers
+        ).json()["key_id"]
+        revoked = isolated_client.delete(f"/auth/api-key/{key_id}", headers=headers)
+        assert revoked.status_code == 200
+        again = isolated_client.delete(f"/auth/api-key/{key_id}", headers=headers)
+        assert again.status_code == 404
+
+    def test_revoke_foreign_key_denied(self, isolated_client):
+        isolated_client.post(
+            "/auth/signup",
+            json={
+                "email": "victim@example.com",
+                "password": "pw-123456",
+                "tier": "free",
+            },
+        )
+        victim_token = isolated_client.post(
+            "/auth/login",
+            json={"email": "victim@example.com", "password": "pw-123456"},
+        ).json()["access_token"]
+        victim_key = isolated_client.post(
+            "/auth/api-key",
+            json={"tier": "free"},
+            headers={"Authorization": f"Bearer {victim_token}"},
+        ).json()["key_id"]
+        isolated_client.post(
+            "/auth/signup",
+            json={
+                "email": "attacker@example.com",
+                "password": "pw-123456",
+                "tier": "free",
+            },
+        )
+        attacker_token = isolated_client.post(
+            "/auth/login",
+            json={"email": "attacker@example.com", "password": "pw-123456"},
+        ).json()["access_token"]
+        denied = isolated_client.delete(
+            f"/auth/api-key/{victim_key}",
+            headers={"Authorization": f"Bearer {attacker_token}"},
+        )
+        assert denied.status_code == 404
+        # Victim key still works
+        me = isolated_client.get(
+            "/auth/me", headers={"Authorization": f"Bearer {victim_token}"}
+        )
+        assert me.status_code == 200
