@@ -32,9 +32,7 @@ cp .env.example .env
 
 # Edit .env with your credentials:
 # - SEC_API_KEY: Get from https://sec-api.io/
-# - STRIPE_SECRET_KEY: Get from Stripe dashboard
-# - STRIPE_PRICE_ID: Your Stripe product price ID
-# - STRIPE_WEBHOOK_SECRET: Your Stripe webhook secret
+# - JWT_SECRET_KEY: Generate with python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 ### 3. Run Application
@@ -133,9 +131,6 @@ services:
       - "8000:8000"
     environment:
       - SEC_API_KEY=${SEC_API_KEY}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
-      - STRIPE_PRICE_ID=${STRIPE_PRICE_ID}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
     volumes:
       - ./cache_directory:/app/cache_directory
@@ -171,9 +166,7 @@ heroku create edgar-text-api
 
 # Set environment variables
 heroku config:set SEC_API_KEY=your_key
-heroku config:set STRIPE_SECRET_KEY=your_key
-heroku config:set STRIPE_PRICE_ID=your_price_id
-heroku config:set STRIPE_WEBHOOK_SECRET=your_secret
+heroku config:set JWT_SECRET_KEY=your_stable_secret
 
 # Create Procfile
 echo "web: uvicorn api:app --host 0.0.0.0 --port \$PORT" > Procfile
@@ -193,9 +186,7 @@ provider:
   region: us-east-1
   environment:
     SEC_API_KEY: ${env:SEC_API_KEY}
-    STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
-    STRIPE_PRICE_ID: ${env:STRIPE_PRICE_ID}
-    STRIPE_WEBHOOK_SECRET: ${env:STRIPE_WEBHOOK_SECRET}
+    JWT_SECRET_KEY: ${env:JWT_SECRET_KEY}
 
 functions:
   api:
@@ -235,13 +226,7 @@ services:
   - key: SEC_API_KEY
     scope: RUN_TIME
     type: SECRET
-  - key: STRIPE_SECRET_KEY
-    scope: RUN_TIME
-    type: SECRET
-  - key: STRIPE_PRICE_ID
-    scope: RUN_TIME
-    type: SECRET
-  - key: STRIPE_WEBHOOK_SECRET
+  - key: JWT_SECRET_KEY
     scope: RUN_TIME
     type: SECRET
 ```
@@ -252,9 +237,6 @@ services:
 ```bash
 # Required
 SEC_API_KEY=your_sec_api_key
-STRIPE_SECRET_KEY=sk_live_your_production_key
-STRIPE_PRICE_ID=price_your_production_price
-STRIPE_WEBHOOK_SECRET=whsec_your_production_secret
 JWT_SECRET_KEY=stable_random_secret_shared_by_all_workers
 
 # Optional Security Configuration
@@ -274,10 +256,9 @@ DEBUG=false
 LOG_LEVEL=INFO
 ```
 
-> After a successful `checkout.session.completed` webhook, the buyer's tier
-> is upgraded automatically. Upgraded users must log in again so their new
-> tier appears in fresh tokens; API keys minted before the upgrade keep the
-> previous tier — generate a new key after upgrading.
+> Tiers (`free`/`basic`/`premium`) are self-selected at signup and act as
+> local rate-limit buckets only. There is no billing; nothing provisions or
+> revokes tiers except the account owner editing the auth store.
 
 ### Nginx Configuration (nginx.conf)
 ```nginx
@@ -325,9 +306,8 @@ uvicorn api:app \
   --workers 4
 ```
 
-> Multi-worker notes: auth users/keys (`data/auth_store.json`), webhook
-> idempotency, and rate-limit buckets are file/disk-cache backed and shared
-> by workers on the same host. All workers must share the same filesystem
+> Multi-worker notes: auth users/keys (`data/auth_store.json`) and rate-limit
+> buckets are file/disk-cache backed and shared by workers on the same host. All workers must share the same filesystem
 > paths (`data/`, `cache_directory/`, `models/`) and the same
 > `JWT_SECRET_KEY`; otherwise tokens issued by one worker fail on another.
 > Set users back to `free` on upgrade reversal by re-running provisioning.
@@ -373,7 +353,6 @@ gunicorn api:app \
 - [ ] Use HTTPS with valid SSL certificates
 - [ ] Configure CORS for specific domains only
 - [ ] Set up rate limiting (implemented in API)
-- [ ] Use production Stripe keys
 - [ ] Validate all API inputs (implemented)
 - [ ] Set up Web Application Firewall (WAF)
 - [ ] Regular security updates
@@ -400,7 +379,7 @@ sudo certbot --nginx -d your-domain.com
 2. **Environment Variable Issues**
    ```bash
    # Verify environment variables are loaded
-   printenv | grep -E "(SEC_API_KEY|STRIPE)"
+   printenv | grep -E "SEC_API_KEY|JWT_SECRET_KEY"
    ```
 
 3. **Port Already in Use**

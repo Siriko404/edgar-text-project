@@ -12,8 +12,8 @@ A dual-mode financial text analysis API that combines traditional sentiment anal
 - **SEC Filing Integration**: Professional-grade SEC API integration with intelligent caching
 - **Performance Optimized**: Quantized ONNX models for fast CPU inference
 - **Readability Metrics**: Gunning Fog scores for document complexity analysis
-- **Payment Integration**: Stripe-powered monetization with webhook handling
 - **Auto-documented API**: FastAPI with automatic OpenAPI/Swagger documentation
+- **Free and open**: No accounts, billing, or paywalls — download and run.
 
 ## 🏗️ Architecture Overview
 
@@ -39,8 +39,7 @@ A dual-mode financial text analysis API that combines traditional sentiment anal
 ### Prerequisites
 
 - Python 3.12 or higher
-- SEC API key (from [sec-api.io](https://sec-api.io/))
-- Stripe account (for payment features)
+- SEC API key (from [sec-api.io](https://sec-api.io/)) — only needed for `/analyze/{ticker}`
 
 ### Installation
 
@@ -63,14 +62,8 @@ A dual-mode financial text analysis API that combines traditional sentiment anal
 
 3. **Install dependencies**:
    ```bash
-   # Core dependencies
-   pip install fastapi uvicorn[standard]
-   pip install stripe python-dotenv
-   pip install sec-api diskcache textstat
-   pip install optimum[onnxruntime] transformers
-
-   # Development dependencies
-   pip install black flake8 pre-commit
+    # Core dependencies
+    pip install -r requirements.txt
    ```
 
 4. **Configure environment variables**:
@@ -79,13 +72,10 @@ A dual-mode financial text analysis API that combines traditional sentiment anal
    cp .env.example .env
    ```
 
-   Edit `.env` with your credentials:
-   ```env
-   SEC_API_KEY=your_sec_api_key_here
-   STRIPE_SECRET_KEY=sk_test_your_stripe_test_key
-   STRIPE_PRICE_ID=price_your_stripe_price_id
-   STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
-   ```
+    Edit `.env` with your credentials:
+    ```env
+    SEC_API_KEY=your_sec_api_key_here
+    ```
 
 5. **Verify analysis assets**:
    ```bash
@@ -225,10 +215,9 @@ edgar-text/
 
 **Current Implementation**:
 - Environment-based secret management (see `config.py` + `.env.example`)
-- Stripe webhook signature verification with persisted idempotency
 - Tiered rate limiting (10/100/1000/10000 per hour) with `X-RateLimit-*` headers
 - Input validation (length/content checks, ticker format)
-- File-persisted users/API keys; premium provisioned by webhook
+- File-persisted users/API keys with self-selected tiers (local rate-limit labels)
 
 **Production Recommendations**:
 - Set a stable `JWT_SECRET_KEY` shared by all workers
@@ -241,12 +230,12 @@ edgar-text/
 
 - **Model files are local**: `models/` is git-ignored; provision it per machine
   and verify with `python scripts/check_assets.py`.
-- **External keys required**: SEC and Stripe features need real credentials;
-  unit tests run hermetically with mocks (`pytest -m "not integration"`).
-- **File-backed state**: users, API keys, webhook ids, and rate buckets persist
+- **External keys required**: the `/analyze/{ticker}` flow needs a real
+  `SEC_API_KEY`; unit tests run hermetically with mocks (`pytest -m "not integration"`).
+- **File-backed state**: users, API keys, and rate buckets persist
   in `data/` + `cache_directory/` — back them up and share them across workers.
-- **Premium needs payment**: signup offers `free`/`basic`; `premium` is granted
-  by the Stripe webhook after checkout (re-login refreshes the tier).
+- **Tiers are local labels**: signup offers `free`/`basic`/`premium` as
+  self-selected rate-limit buckets; there is no billing.
 
 ## 📈 Monitoring & Debugging
 
@@ -259,8 +248,7 @@ edgar-text/
 
 1. **Model Loading Errors**: Ensure `models/` directory has proper files
 2. **SEC API Failures**: Check API key validity and rate limits
-3. **Stripe Webhooks**: Verify webhook secret configuration
-4. **Cache Permissions**: Ensure write access to `cache_directory/`
+3. **Cache Permissions**: Ensure write access to `cache_directory/`
 
 ## 🤝 Contributing
 
@@ -276,7 +264,6 @@ edgar-text/
 ## 🔗 Resources
 
 - **SEC API Documentation**: https://sec-api.io/docs
-- **Stripe API Documentation**: https://stripe.com/docs/api
 - **FastAPI Documentation**: https://fastapi.tiangolo.com/
 - **DistilFinBERT Model**: https://huggingface.co/ProsusAI/finbert
 

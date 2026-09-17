@@ -263,24 +263,11 @@ Authorization: Bearer edgar_abc123def456...
 - `sentiment.negative_count`: Number of negative words (Loughran-McDonald dictionary)
 - `change_score_similarity_ratio`: Text similarity between filings (0.0-1.0, higher = more similar)
 
-### Payment Endpoints
+### Payments
 
-#### `POST /create-checkout-session`
-Create a Stripe checkout session for premium features.
-
-**Response:**
-```http
-HTTP/1.1 303 See Other
-Location: https://checkout.stripe.com/session_abc123...
-```
-
-#### `POST /webhook`
-Stripe webhook handler for payment events (internal use).
-
-**Headers:**
-```http
-Stripe-Signature: t=timestamp,v1=signature...
-```
+None. This is a free tool with no billing, checkout, or webhook endpoints.
+Tiers (`free`/`basic`/`premium`) are self-selected at signup and act as local
+rate-limit buckets only.
 
 ## Error Responses
 

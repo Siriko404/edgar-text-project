@@ -16,12 +16,17 @@ Since v1.0, the gaps listed under Technical Debt / Testing / Security were
 closed: Pydantic v2 compatibility (`pattern`, `field_validator`); centralized
 `config.py` + full `.env.example`; configurable `LM_DICTIONARY_PATH` /
 `MODEL_PATH` with explicit missing-asset errors and `scripts/check_assets.py`;
-hermetic pytest suite (`tests/`, 38 tests, `--integration` opt-in); tiered
+hermetic pytest suite (`tests/`, `--integration` opt-in); tiered
 rate limits with `X-RateLimit-*` headers; file-persisted users/API keys
-(`auth_store.py`); Stripe checkout metadata + webhook provisioning with
-persisted idempotency; env-driven CORS/trusted-hosts/limits and corrected
+(`auth_store.py`); env-driven CORS/trusted-hosts/limits and corrected
 multi-worker deployment docs. Where sections below still say these are
 missing, treat this note as authoritative.
+
+Billing was then removed entirely: the project ships as a free downloadable
+tool, so Stripe checkout/webhook code, `STRIPE_*` configuration,
+`success.html`/`cancel.html`, and payment tests were deleted. Tiers remain
+only as self-selected local rate-limit labels. Where sections below describe
+payment processing or monetization, they are historical.
 
 ### Change Log
 
