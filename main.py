@@ -18,9 +18,7 @@ def _get_query_api():
     if _query_api is None:
         api_key = os.getenv("SEC_API_KEY")
         if not api_key:
-            raise ValueError(
-                "SEC_API_KEY not found. Ensure it is in your .env file."
-            )
+            raise ValueError("SEC_API_KEY not found. Ensure it is in your .env file.")
         _query_api = QueryApi(api_key=api_key)
     return _query_api
 
@@ -31,9 +29,7 @@ def _get_extractor_api():
     if _extractor_api is None:
         api_key = os.getenv("SEC_API_KEY")
         if not api_key:
-            raise ValueError(
-                "SEC_API_KEY not found. Ensure it is in your .env file."
-            )
+            raise ValueError("SEC_API_KEY not found. Ensure it is in your .env file.")
         _extractor_api = ExtractorApi(api_key=api_key)
     return _extractor_api
 

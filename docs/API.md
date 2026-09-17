@@ -45,7 +45,8 @@ Rate limits vary by authentication tier:
 | Basic | 1,000 requests/hour | Yes |
 | Premium | 10,000 requests/hour | Yes |
 
-Rate limit headers are included in all responses:
+Rate limit headers are included in rate-limited responses
+(analysis and authentication endpoints):
 - `X-RateLimit-Limit`: Maximum requests per window
 - `X-RateLimit-Remaining`: Remaining requests in current window
 - `X-RateLimit-Reset`: Unix timestamp when the window resets
@@ -62,6 +63,22 @@ Check API health and status.
 {
   "status": "ok",
   "message": "Edgar-Text API is running"
+}
+```
+
+#### `GET /ready`
+Readiness probe for orchestration and deploy scripts (liveness stays on `GET /`).
+
+**Response:**
+```json
+{
+  "ready": true,
+  "checks": {
+    "sec_api_key": true,
+    "dictionary": true,
+    "model": true,
+    "auth_store": true
+  }
 }
 ```
 
@@ -159,21 +176,6 @@ Get current user information (requires authentication).
   "tier": "basic",
   "rate_limit": 1000,
   "auth_type": "api_key"
-}
-```
-
-#### `GET /auth/demo-keys`
-Get demo API keys for testing (development only).
-
-**Response:**
-```json
-{
-  "demo_keys": [
-    "edgar_abc123def456...",
-    "edgar_xyz789uvw012..."
-  ],
-  "note": "These are demo keys for testing. In production, use proper authentication.",
-  "usage": "Include any of these keys in the Authorization header as 'Bearer <key>'"
 }
 ```
 
@@ -290,6 +292,7 @@ All errors follow a consistent format:
 | 422 | Validation Error | Invalid request data |
 | 429 | Too Many Requests | Rate limit exceeded |
 | 500 | Internal Server Error | Server-side error |
+| 502 | Bad Gateway | SEC extraction failed |
 | 503 | Service Unavailable | Model not loaded |
 
 ### Error Examples
@@ -447,9 +450,9 @@ curl "https://api.edgar-text.com/analyze/AAPL" \
   -H "Authorization: Bearer edgar_your_api_key_here"
 ```
 
-**Get Demo API Keys:**
+**Check Readiness:**
 ```bash
-curl "http://localhost:8000/auth/demo-keys"
+curl "http://localhost:8000/ready"
 ```
 
 ## Interactive Documentation

@@ -259,7 +259,7 @@ edgar-text/
 
 ## 📄 License
 
-[Add your license information here]
+MIT — see [LICENSE](LICENSE).
 
 ## 🔗 Resources
 

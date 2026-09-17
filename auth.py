@@ -36,6 +36,7 @@ security = HTTPBearer(auto_error=False)
 
 class TokenData(BaseModel):
     """JWT token data model."""
+
     user_id: str
     email: Optional[str] = None
     tier: str = "free"  # free, basic, premium
@@ -44,6 +45,7 @@ class TokenData(BaseModel):
 
 class APIKeyData(BaseModel):
     """API key data model."""
+
     key_id: str
     user_id: str
     tier: str = "free"
@@ -69,25 +71,26 @@ def generate_api_key(user_id: str, tier: str = "free") -> str:
         user_id=user_id,
         tier=tier,
         rate_limit=_get_rate_limit_for_tier(tier),
-        created_at=datetime.utcnow()
+        created_at=datetime.utcnow(),
     )
 
     # Persist (hashed lookup; plaintext never stored). Shown once to caller.
-    auth_store.save_api_key({
-        "api_key": api_key,
-        "key_id": key_data.key_id,
-        "user_id": key_data.user_id,
-        "tier": key_data.tier,
-        "rate_limit": key_data.rate_limit,
-        "created_at": key_data.created_at.isoformat(),
-        "last_used": None,
-    })
+    auth_store.save_api_key(
+        {
+            "api_key": api_key,
+            "key_id": key_data.key_id,
+            "user_id": key_data.user_id,
+            "tier": key_data.tier,
+            "rate_limit": key_data.rate_limit,
+            "created_at": key_data.created_at.isoformat(),
+            "last_used": None,
+        }
+    )
 
-    logger.info(f"Generated API key for user {user_id}", extra={
-        "user_id": user_id,
-        "tier": tier,
-        "key_prefix": api_key[:12] + "..."
-    })
+    logger.info(
+        f"Generated API key for user {user_id}",
+        extra={"user_id": user_id, "tier": tier, "key_prefix": api_key[:12] + "..."},
+    )
 
     return api_key
 
@@ -112,16 +115,15 @@ def create_jwt_token(user_id: str, email: str = None, tier: str = "free") -> str
         "tier": tier,
         "exp": expires_at,
         "iat": datetime.utcnow(),
-        "iss": "edgar-text-api"
+        "iss": "edgar-text-api",
     }
 
     token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-    logger.info(f"Created JWT token for user {user_id}", extra={
-        "user_id": user_id,
-        "tier": tier,
-        "expires_at": expires_at.isoformat()
-    })
+    logger.info(
+        f"Created JWT token for user {user_id}",
+        extra={"user_id": user_id, "tier": tier, "expires_at": expires_at.isoformat()},
+    )
 
     return token
 
@@ -135,14 +137,13 @@ def verify_jwt_token(token: str) -> TokenData:
             user_id=payload["user_id"],
             email=payload.get("email"),
             tier=payload.get("tier", "free"),
-            expires_at=datetime.fromtimestamp(payload["exp"])
+            expires_at=datetime.fromtimestamp(payload["exp"]),
         )
 
         # Check if token is expired
         if token_data.expires_at < datetime.utcnow():
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has expired"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired"
             )
 
         return token_data
@@ -151,15 +152,13 @@ def verify_jwt_token(token: str) -> TokenData:
         logger.warning("JWT token expired")
         metrics.record_counter("auth_token_expired")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired"
         )
     except jwt.InvalidTokenError as e:
         logger.warning(f"Invalid JWT token: {e}")
         metrics.record_counter("auth_invalid_token")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
         )
 
 
@@ -171,8 +170,7 @@ def verify_api_key(api_key: str) -> APIKeyData:
         logger.warning(f"Invalid API key format: {api_key[:12]}...")
         metrics.record_counter("auth_invalid_api_key_format")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key format"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key format"
         )
 
     stored = auth_store.get_api_key(api_key)
@@ -180,8 +178,7 @@ def verify_api_key(api_key: str) -> APIKeyData:
         logger.warning(f"API key not found: {api_key[:12]}...")
         metrics.record_counter("auth_api_key_not_found")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
         )
 
     auth_store.touch_api_key(api_key, datetime.utcnow().isoformat())
@@ -195,16 +192,21 @@ def verify_api_key(api_key: str) -> APIKeyData:
         created_at=datetime.fromisoformat(stored["created_at"]),
         last_used=datetime.utcnow(),
     )
-    logger.info("Valid API key used", extra={
-        "key_prefix": api_key[:12] + "...",
-        "user_id": key_data.user_id,
-        "tier": key_data.tier
-    })
+    logger.info(
+        "Valid API key used",
+        extra={
+            "key_prefix": api_key[:12] + "...",
+            "user_id": key_data.user_id,
+            "tier": key_data.tier,
+        },
+    )
     metrics.record_counter("auth_api_key_success", labels={"tier": key_data.tier})
     return key_data
 
 
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> Dict[str, Any]:
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+) -> Dict[str, Any]:
     """
     Dependency to get current authenticated user.
     Supports both JWT tokens and API keys.
@@ -214,7 +216,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     token = credentials.credentials
@@ -227,7 +229,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
                 "user_id": api_key_data.user_id,
                 "tier": api_key_data.tier,
                 "rate_limit": api_key_data.rate_limit,
-                "auth_type": "api_key"
+                "auth_type": "api_key",
             }
         except HTTPException:
             pass  # Fall through to JWT verification
@@ -240,18 +242,20 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
             "email": token_data.email,
             "tier": token_data.tier,
             "rate_limit": _get_rate_limit_for_tier(token_data.tier),
-            "auth_type": "jwt"
+            "auth_type": "jwt",
         }
     except HTTPException:
         metrics.record_counter("auth_failed")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
 
-async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> Optional[Dict[str, Any]]:
+async def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+) -> Optional[Dict[str, Any]]:
     """
     Optional authentication dependency.
     Returns user data if authenticated, None otherwise.
@@ -270,6 +274,7 @@ def require_tier(required_tier: str):
     Dependency factory to require a specific user tier.
     Usage: @app.get("/premium-endpoint", dependencies=[Depends(require_tier("premium"))])
     """
+
     async def check_tier(current_user: Dict[str, Any] = Depends(get_current_user)):
         tier_hierarchy = {"free": 0, "basic": 1, "premium": 2}
 
@@ -277,18 +282,24 @@ def require_tier(required_tier: str):
         required_tier_level = tier_hierarchy.get(required_tier, 999)
 
         if user_tier_level < required_tier_level:
-            logger.warning("Insufficient tier access", extra={
-                "user_id": current_user["user_id"],
-                "user_tier": current_user["tier"],
-                "required_tier": required_tier
-            })
-            metrics.record_counter("auth_insufficient_tier", labels={
-                "user_tier": current_user["tier"],
-                "required_tier": required_tier
-            })
+            logger.warning(
+                "Insufficient tier access",
+                extra={
+                    "user_id": current_user["user_id"],
+                    "user_tier": current_user["tier"],
+                    "required_tier": required_tier,
+                },
+            )
+            metrics.record_counter(
+                "auth_insufficient_tier",
+                labels={
+                    "user_tier": current_user["tier"],
+                    "required_tier": required_tier,
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"This endpoint requires {required_tier} tier access"
+                detail=f"This endpoint requires {required_tier} tier access",
             )
 
         return current_user

@@ -28,6 +28,15 @@ tool, so Stripe checkout/webhook code, `STRIPE_*` configuration,
 only as self-selected local rate-limit labels. Where sections below describe
 payment processing or monetization, they are historical.
 
+Ship-hardening followed: dotenv loads before auth so `.env` secrets apply;
+rate limiting is enforced from one shared module on analysis and auth
+endpoints with disk-cache-shared buckets; API keys persist as SHA-256
+lookups (plaintext shown once, never stored); key revocation is owner-only;
+the `/auth/demo-keys` endpoint was deleted; the auth store serializes writers
+with file locks and quarantines corrupt files instead of resetting silently;
+company-analysis failures return typed HTTP codes (404/500/502); and a
+`/ready` probe reports sec-key, dictionary, model, and store state.
+
 ### Change Log
 
 | Date       | Version | Description                 | Author         |

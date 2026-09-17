@@ -18,15 +18,12 @@ def client():
 @pytest.fixture
 def mock_sentiment_pipeline():
     """Mock the global sentiment pipeline."""
-    mock_pipeline = {
-        "tokenizer": MagicMock(),
-        "model": MagicMock()
-    }
+    mock_pipeline = {"tokenizer": MagicMock(), "model": MagicMock()}
 
     # Setup tokenizer mock
     mock_pipeline["tokenizer"].return_value = {
         "input_ids": [[1, 2, 3]],
-        "attention_mask": [[1, 1, 1]]
+        "attention_mask": [[1, 1, 1]],
     }
 
     # Setup model mock
@@ -38,7 +35,11 @@ def mock_sentiment_pipeline():
         [0.1, 0.2, mock_probability]
     ]  # Positive with 0.7 confidence
     mock_pipeline["model"].return_value = mock_outputs
-    mock_pipeline["model"].config.id2label = {0: "negative", 1: "neutral", 2: "positive"}
+    mock_pipeline["model"].config.id2label = {
+        0: "negative",
+        1: "neutral",
+        2: "positive",
+    }
 
     return mock_pipeline
 
@@ -60,10 +61,14 @@ class TestSentimentAnalysis:
     """Test the sentiment analysis endpoint."""
 
     @patch("api.sentiment_pipeline")
-    def test_analyze_sentiment_success(self, mock_pipeline_global, client, mock_sentiment_pipeline):
+    def test_analyze_sentiment_success(
+        self, mock_pipeline_global, client, mock_sentiment_pipeline
+    ):
         """Test successful sentiment analysis."""
         mock_pipeline_global.__bool__.return_value = True
-        mock_pipeline_global.__getitem__.side_effect = mock_sentiment_pipeline.__getitem__
+        mock_pipeline_global.__getitem__.side_effect = (
+            mock_sentiment_pipeline.__getitem__
+        )
 
         request_data = {"text": "The company reported excellent quarterly results."}
         response = client.post("/analyze/sentiment", json=request_data)
@@ -100,7 +105,9 @@ class TestSentimentAnalysis:
     def test_analyze_sentiment_model_error(self, mock_pipeline_global, client):
         """Test sentiment analysis when model throws an error."""
         mock_pipeline_global.__bool__.return_value = True
-        mock_pipeline_global.__getitem__.side_effect = Exception("Model inference error")
+        mock_pipeline_global.__getitem__.side_effect = Exception(
+            "Model inference error"
+        )
 
         request_data = {"text": "Test text"}
         response = client.post("/analyze/sentiment", json=request_data)
@@ -120,14 +127,14 @@ class TestCompanyAnalysis:
             "latest_filing": {
                 "filed_at": "2024-01-01",
                 "gunning_fog_score": 12.5,
-                "sentiment": {"positive_count": 10, "negative_count": 5}
+                "sentiment": {"positive_count": 10, "negative_count": 5},
             },
             "prior_filing": {
                 "filed_at": "2023-01-01",
                 "gunning_fog_score": 11.8,
-                "sentiment": {"positive_count": 8, "negative_count": 7}
+                "sentiment": {"positive_count": 8, "negative_count": 7},
             },
-            "comparison_metrics": {"change_score_similarity_ratio": 0.85}
+            "comparison_metrics": {"change_score_similarity_ratio": 0.85},
         }
         mock_analyze.return_value = mock_result
 

@@ -7,26 +7,36 @@ from dotenv import load_dotenv
 # (notably auth.JWT_SECRET_KEY, which is read at import time).
 load_dotenv()
 
-from typing import Dict, Any, Optional
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel, Field, field_validator
+from typing import Dict, Any, Optional  # noqa: E402
+from fastapi import (  # noqa: E402
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.middleware.trustedhost import TrustedHostMiddleware  # noqa: E402
+from pydantic import BaseModel, Field, field_validator  # noqa: E402
 
 # Import monitoring and logging
-from logging_config import setup_logging, get_logger
-from monitoring import metrics, PerformanceMonitor, start_background_monitoring
+from logging_config import setup_logging, get_logger  # noqa: E402
+from monitoring import (  # noqa: E402
+    metrics,
+    PerformanceMonitor,
+    start_background_monitoring,
+)
 
 # Import authentication
-from auth import (
+from auth import (  # noqa: E402
     get_current_user_optional,
     initialize_demo_keys,
 )
-from auth_endpoints import auth_router
-from ratelimit import (
-    RATE_LIMIT_REQUESTS,
-    RATE_LIMIT_WINDOW,
+from auth_endpoints import auth_router  # noqa: E402
+from ratelimit import (  # noqa: E402, F401
     enforce_tiered_rate_limit,
+    # Re-exported so tests can reset buckets:
     rate_limit_storage,
 )
 
@@ -123,7 +133,9 @@ def load_model():
 
     # Initialize demo API keys for testing
     demo_keys = initialize_demo_keys()
-    logger.info(f"API startup complete - model loaded, monitoring started, {len(demo_keys)} demo keys created")
+    logger.info(
+        f"API startup complete - model loaded, monitoring started, {len(demo_keys)} demo keys created"
+    )
 
 
 # --- Pydantic Models ---
