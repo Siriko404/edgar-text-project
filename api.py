@@ -7,8 +7,6 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field, field_validator
-from optimum.onnxruntime import ORTModelForSequenceClassification
-from transformers import AutoTokenizer
 import time
 from collections import defaultdict
 
@@ -116,14 +114,27 @@ def load_model():
     """
     Loads the ONNX model and tokenizer into memory when the API starts.
     This is best practice to avoid reloading the model on every request.
+    Heavy ML imports are lazy so test collection does not require torch.
     """
+    import config
+
     logger.info("Starting model loading process")
-    with PerformanceMonitor("model_loading"):
-        model_path = "./models/distilfinbert_onnx_q8"
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = ORTModelForSequenceClassification.from_pretrained(model_path)
-        sentiment_pipeline["tokenizer"] = tokenizer
-        sentiment_pipeline["model"] = model
+    model_path = config.MODEL_PATH
+    if not os.path.isdir(model_path):
+        logger.error(
+            f"Model directory not found at {model_path}. "
+            "Set MODEL_PATH or run scripts/check_assets.py for setup. "
+            "Sentiment endpoint will return 503 until the model is provisioned."
+        )
+    else:
+        from optimum.onnxruntime import ORTModelForSequenceClassification
+        from transformers import AutoTokenizer
+
+        with PerformanceMonitor("model_loading"):
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
+            model = ORTModelForSequenceClassification.from_pretrained(model_path)
+            sentiment_pipeline["tokenizer"] = tokenizer
+            sentiment_pipeline["model"] = model
 
     # Start background monitoring
     start_background_monitoring()

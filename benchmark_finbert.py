@@ -1,11 +1,14 @@
+import os
 import time
 import onnxruntime as ort
 from transformers import AutoTokenizer
 
+MODEL_PATH = os.getenv("MODEL_PATH", os.path.join("models", "distilfinbert_onnx_q8"))
+
 # ------------ Load tokenizer & quantized ONNX model ------------
 tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
 session = ort.InferenceSession(
-    r"models\distilfinbert_onnx_q8\model_quantized.onnx",
+    os.path.join(MODEL_PATH, "model_quantized.onnx"),
     providers=["CPUExecutionProvider"],
 )
 

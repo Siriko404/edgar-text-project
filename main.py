@@ -21,11 +21,18 @@ cache = Cache("cache_directory")
 
 @cache.memoize()
 def load_lm_dictionary():
-    """Loads the Loughran-McDonald dictionary from the local CSV file."""
+    """Loads the Loughran-McDonald dictionary from the local CSV file.
+
+    Raises FileNotFoundError with the configured path when the asset is
+    missing instead of silently returning empty sets.
+    """
+    import config
+
+    dict_path = config.LM_DICTIONARY_PATH
     positive_words, negative_words = set(), set()
     try:
         # Relative path to the data directory
-        with open("data/Loughran-McDonald_MasterDictionary_1993-2024.csv", "r") as f:
+        with open(dict_path, "r") as f:
             next(f)  # Skip header
             for line in f:
                 parts = line.strip().split(",")
@@ -39,7 +46,13 @@ def load_lm_dictionary():
             f"-> Loaded {len(positive_words)} positive and {len(negative_words)} negative words."
         )
         return positive_words, negative_words
-    except (FileNotFoundError, ValueError, IndexError) as e:
+    except FileNotFoundError as e:
+        print(f"ERROR: LM dictionary not found at {dict_path}: {e}")
+        raise FileNotFoundError(
+            f"LM dictionary not found at {dict_path}. "
+            "Set LM_DICTIONARY_PATH or run scripts/check_assets.py for setup."
+        ) from e
+    except (ValueError, IndexError) as e:
         print(f"ERROR processing LM Dictionary: {e}")
         return set(), set()
 
@@ -83,7 +96,14 @@ def analyze_company(ticker: str):
     """
     Main function to perform a full textual analysis for a given company ticker.
     """
-    positive_words, negative_words = load_lm_dictionary()
+    try:
+        positive_words, negative_words = load_lm_dictionary()
+    except FileNotFoundError as e:
+        return {"error": str(e)}
+    if not positive_words and not negative_words:
+        return {
+            "error": "LM dictionary loaded empty; refusing to report zero sentiment."
+        }
 
     filings = get_latest_10k_filings(ticker)
     if len(filings) < 2:
