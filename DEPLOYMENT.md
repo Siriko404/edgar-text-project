@@ -136,9 +136,11 @@ services:
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_PRICE_ID=${STRIPE_PRICE_ID}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
     volumes:
       - ./cache_directory:/app/cache_directory
       - ./models:/app/models
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
@@ -253,17 +255,29 @@ SEC_API_KEY=your_sec_api_key
 STRIPE_SECRET_KEY=sk_live_your_production_key
 STRIPE_PRICE_ID=price_your_production_price
 STRIPE_WEBHOOK_SECRET=whsec_your_production_secret
+JWT_SECRET_KEY=stable_random_secret_shared_by_all_workers
 
 # Optional Security Configuration
 CORS_ORIGINS=https://yourfrontend.com,https://www.yourfrontend.com
 TRUSTED_HOSTS=yourapi.com,www.yourapi.com
-RATE_LIMIT_REQUESTS=1000
+RATE_LIMIT_REQUESTS=100
 RATE_LIMIT_WINDOW=3600
+ANONYMOUS_RATE_LIMIT=10
+
+# Optional Analysis Assets (defaults shown)
+LM_DICTIONARY_PATH=data/Loughran-McDonald_MasterDictionary_1993-2024.csv
+MODEL_PATH=./models/distilfinbert_onnx_q8
+AUTH_STORE_PATH=data/auth_store.json
 
 # Optional Application Configuration
 DEBUG=false
 LOG_LEVEL=INFO
 ```
+
+> After a successful `checkout.session.completed` webhook, the buyer's tier
+> is upgraded automatically. Upgraded users must log in again so their new
+> tier appears in fresh tokens; API keys minted before the upgrade keep the
+> previous tier — generate a new key after upgrading.
 
 ### Nginx Configuration (nginx.conf)
 ```nginx
@@ -304,16 +318,19 @@ http {
 
 ### Uvicorn Production Settings
 ```bash
-# Multiple workers for production
+# Multiple workers for production (--workers cannot be combined with --reload)
 uvicorn api:app \
   --host 0.0.0.0 \
   --port 8000 \
-  --workers 4 \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --max-requests 1000 \
-  --max-requests-jitter 100 \
-  --preload
+  --workers 4
 ```
+
+> Multi-worker notes: auth users/keys (`data/auth_store.json`), webhook
+> idempotency, and rate-limit buckets are file/disk-cache backed and shared
+> by workers on the same host. All workers must share the same filesystem
+> paths (`data/`, `cache_directory/`, `models/`) and the same
+> `JWT_SECRET_KEY`; otherwise tokens issued by one worker fail on another.
+> Set users back to `free` on upgrade reversal by re-running provisioning.
 
 ### Gunicorn Alternative
 ```bash

@@ -65,13 +65,21 @@ app = FastAPI(
 app.include_router(auth_router)
 
 # --- Security Middleware ---
+# Origins and hosts are configured via CORS_ORIGINS / TRUSTED_HOSTS.
+# "testserver" is accepted only under pytest so TestClient works.
+import sys as _sys
+
+import config as _config
+
+_cors_origins = list(_config.CORS_ORIGINS)
+_trusted_hosts = list(_config.TRUSTED_HOSTS)
+if "pytest" in _sys.modules and "testserver" not in _trusted_hosts:
+    _trusted_hosts.append("testserver")
+
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:8000",
-    ],  # Add your frontend URLs
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -80,15 +88,31 @@ app.add_middleware(
 # Trusted host middleware (prevent host header attacks)
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "testserver", "*.example.com"],  # Update for production
+    allowed_hosts=_trusted_hosts,
 )
 
 # --- Rate Limiting ---
 # Tiered per-identity rate limiting. Anonymous callers share a per-IP bucket;
 # authenticated callers get the bucket of their tier (see docs/API.md).
+# Buckets live in the shared disk cache so multiple workers enforce one limit.
 rate_limit_storage = defaultdict(list)
-RATE_LIMIT_REQUESTS = 100  # requests per window
-RATE_LIMIT_WINDOW = 3600  # 1 hour in seconds
+RATE_LIMIT_REQUESTS = _config.RATE_LIMIT_REQUESTS  # requests per window
+RATE_LIMIT_WINDOW = _config.RATE_LIMIT_WINDOW  # seconds
+
+
+def _bucket_load(key: str) -> list:
+    try:
+        return list(main.cache.get(f"ratelimit:{key}") or [])
+    except Exception:
+        return list(rate_limit_storage.get(key, []))
+
+
+def _bucket_save(key: str, hits: list) -> None:
+    rate_limit_storage[key] = hits
+    try:
+        main.cache.set(f"ratelimit:{key}", hits, expire=RATE_LIMIT_WINDOW * 2)
+    except Exception as e:
+        logger.warning(f"Could not persist rate bucket {key}: {e}")
 
 
 def check_rate_limit(client_ip: str) -> bool:
@@ -99,17 +123,15 @@ def check_rate_limit(client_ip: str) -> bool:
 def _check_bucket(key: str, limit: int, window: int) -> bool:
     """Record a hit in the named bucket; True when under the limit."""
     now = time.time()
-    # Clean old requests
-    rate_limit_storage[key] = [
-        req_time for req_time in rate_limit_storage[key] if now - req_time < window
-    ]
+    hits = [t for t in _bucket_load(key) if now - t < window]
 
     # Check if under limit
-    if len(rate_limit_storage[key]) >= limit:
+    if len(hits) >= limit:
+        _bucket_save(key, hits)
         return False
 
     # Add current request
-    rate_limit_storage[key].append(now)
+    _bucket_save(key, hits + [now])
     return True
 
 
@@ -130,20 +152,19 @@ def enforce_tiered_rate_limit(
     limit = get_user_rate_limit(user)
     key = _rate_limit_identity(user, client_ip)
     now = time.time()
-    hits = [
-        t for t in rate_limit_storage[key] if now - t < RATE_LIMIT_WINDOW
-    ]
+    hits = [t for t in _bucket_load(key) if now - t < RATE_LIMIT_WINDOW]
     remaining = max(0, limit - len(hits))
     reset = int(now + RATE_LIMIT_WINDOW)
     response.headers["X-RateLimit-Limit"] = str(limit)
     response.headers["X-RateLimit-Remaining"] = str(remaining)
     response.headers["X-RateLimit-Reset"] = str(reset)
     if len(hits) >= limit:
+        _bucket_save(key, hits)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded. Please try again later.",
         )
-    rate_limit_storage[key] = hits + [now]
+    _bucket_save(key, hits + [now])
     response.headers["X-RateLimit-Remaining"] = str(max(0, limit - len(hits) - 1))
 
 
