@@ -73,28 +73,14 @@ class UserInfoResponse(BaseModel):
 @auth_router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest):
     """
-    User login endpoint.
-    In production, this would verify credentials against a database.
+    User login endpoint backed by the persisted user store.
     """
     logger.info(f"Login attempt for email: {request.email}")
 
-    # Demo implementation - in production, verify against database
-    if request.email == "demo@example.com" and request.password == "demo123":
-        user_id = "demo_user"
-        tier = "basic"
+    import auth_store
 
-        token = create_jwt_token(user_id=user_id, email=request.email, tier=tier)
-
-        metrics.record_counter("auth_login_success", labels={"tier": tier})
-        logger.info(f"Successful login for user: {user_id}")
-
-        return TokenResponse(
-            access_token=token,
-            expires_in=24 * 3600,  # 24 hours
-            user_id=user_id,
-            tier=tier
-        )
-    else:
+    user = auth_store.verify_user(request.email, request.password)
+    if user is None:
         metrics.record_counter("auth_login_failed")
         logger.warning(f"Failed login attempt for email: {request.email}")
         raise HTTPException(
@@ -102,28 +88,54 @@ async def login(request: LoginRequest):
             detail="Invalid email or password"
         )
 
+    token = create_jwt_token(
+        user_id=user["user_id"], email=user["email"], tier=user["tier"]
+    )
 
-@auth_router.post("/signup", response_model=TokenResponse)
-async def signup(request: SignupRequest):
-    """
-    User signup endpoint.
-    In production, this would create a new user in the database.
-    """
-    logger.info(f"Signup attempt for email: {request.email}")
-
-    # Demo implementation - in production, create user in database
-    user_id = f"user_{request.email.split('@')[0]}"
-
-    token = create_jwt_token(user_id=user_id, email=request.email, tier=request.tier)
-
-    metrics.record_counter("auth_signup_success", labels={"tier": request.tier})
-    logger.info(f"Successful signup for user: {user_id}")
+    metrics.record_counter("auth_login_success", labels={"tier": user["tier"]})
+    logger.info(f"Successful login for user: {user['user_id']}")
 
     return TokenResponse(
         access_token=token,
         expires_in=24 * 3600,  # 24 hours
-        user_id=user_id,
-        tier=request.tier
+        user_id=user["user_id"],
+        tier=user["tier"]
+    )
+
+
+@auth_router.post("/signup", response_model=TokenResponse)
+async def signup(request: SignupRequest):
+    """
+    User signup endpoint backed by the persisted user store.
+    """
+    logger.info(f"Signup attempt for email: {request.email}")
+
+    import auth_store
+
+    if request.tier not in ("free", "basic", "premium"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unknown tier. Choose free, basic, or premium.",
+        )
+    try:
+        user = auth_store.create_user(request.email, request.password, request.tier)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(e)
+        )
+
+    token = create_jwt_token(
+        user_id=user["user_id"], email=user["email"], tier=user["tier"]
+    )
+
+    metrics.record_counter("auth_signup_success", labels={"tier": user["tier"]})
+    logger.info(f"Successful signup for user: {user['user_id']}")
+
+    return TokenResponse(
+        access_token=token,
+        expires_in=24 * 3600,  # 24 hours
+        user_id=user["user_id"],
+        tier=user["tier"]
     )
 
 
@@ -222,12 +234,16 @@ async def revoke_api_key(
     })
 
     # Demo implementation - in production, mark as revoked in database
-    revoked = False
-    for api_key in list(VALID_API_KEYS):
-        if key_id in api_key:
-            VALID_API_KEYS.remove(api_key)
-            revoked = True
-            break
+    import auth_store
+
+    revoked = auth_store.delete_api_key_by_id(key_id)
+    if not revoked:
+        # Legacy fallback for pre-persistence in-memory keys
+        for api_key in list(VALID_API_KEYS):
+            if key_id in api_key:
+                VALID_API_KEYS.remove(api_key)
+                revoked = True
+                break
 
     if revoked:
         metrics.record_counter("auth_api_key_revoked")

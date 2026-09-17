@@ -54,7 +54,9 @@ class APIKeyData(BaseModel):
 
 
 def generate_api_key(user_id: str, tier: str = "free") -> str:
-    """Generate a new API key for a user."""
+    """Generate a new API key for a user (persisted across restarts)."""
+    import auth_store
+
     # Create unique identifier
     timestamp = datetime.utcnow().isoformat()
     raw_key = f"{user_id}:{tier}:{timestamp}:{secrets.token_urlsafe(16)}"
@@ -63,7 +65,6 @@ def generate_api_key(user_id: str, tier: str = "free") -> str:
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()[:24]
     api_key = f"{API_KEY_PREFIX}{key_hash}"
 
-    # In production, store in database
     key_data = APIKeyData(
         key_id=key_hash,
         user_id=user_id,
@@ -72,7 +73,16 @@ def generate_api_key(user_id: str, tier: str = "free") -> str:
         created_at=datetime.utcnow()
     )
 
-    # For demo purposes, store in memory
+    # Persist for all workers/restarts; mirror in memory for compat
+    auth_store.save_api_key({
+        "api_key": api_key,
+        "key_id": key_data.key_id,
+        "user_id": key_data.user_id,
+        "tier": key_data.tier,
+        "rate_limit": key_data.rate_limit,
+        "created_at": key_data.created_at.isoformat(),
+        "last_used": None,
+    })
     VALID_API_KEYS.add(api_key)
 
     logger.info(f"Generated API key for user {user_id}", extra={
@@ -156,7 +166,9 @@ def verify_jwt_token(token: str) -> TokenData:
 
 
 def verify_api_key(api_key: str) -> APIKeyData:
-    """Verify an API key."""
+    """Verify an API key against the persisted store."""
+    import auth_store
+
     if not api_key.startswith(API_KEY_PREFIX):
         logger.warning(f"Invalid API key format: {api_key[:12]}...")
         metrics.record_counter("auth_invalid_api_key_format")
@@ -165,34 +177,46 @@ def verify_api_key(api_key: str) -> APIKeyData:
             detail="Invalid API key format"
         )
 
-    # In production, lookup in database
-    if api_key not in VALID_API_KEYS:
-        logger.warning(f"API key not found: {api_key[:12]}...")
-        metrics.record_counter("auth_api_key_not_found")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key"
+    stored = auth_store.get_api_key(api_key)
+    if stored is not None:
+        auth_store.touch_api_key(api_key, datetime.utcnow().isoformat())
+        key_data = APIKeyData(
+            key_id=stored["key_id"],
+            user_id=stored["user_id"],
+            tier=stored.get("tier", "free"),
+            rate_limit=stored.get(
+                "rate_limit", _get_rate_limit_for_tier(stored.get("tier", "free"))
+            ),
+            created_at=datetime.fromisoformat(stored["created_at"]),
+            last_used=datetime.utcnow(),
         )
+        logger.info(f"Valid API key used", extra={
+            "key_prefix": api_key[:12] + "...",
+            "user_id": key_data.user_id,
+            "tier": key_data.tier
+        })
+        metrics.record_counter("auth_api_key_success", labels={"tier": key_data.tier})
+        return key_data
 
-    # For demo purposes, return mock data
-    # In production, fetch from database
-    key_data = APIKeyData(
-        key_id=api_key[len(API_KEY_PREFIX):],
-        user_id="demo_user",
-        tier="basic",
-        rate_limit=1000,
-        created_at=datetime.utcnow() - timedelta(days=30),
-        last_used=datetime.utcnow()
+    # Legacy fallback for keys minted before persistence existed
+    if api_key in VALID_API_KEYS:
+        key_data = APIKeyData(
+            key_id=api_key[len(API_KEY_PREFIX):],
+            user_id="demo_user",
+            tier="basic",
+            rate_limit=1000,
+            created_at=datetime.utcnow() - timedelta(days=30),
+            last_used=datetime.utcnow()
+        )
+        metrics.record_counter("auth_api_key_success", labels={"tier": key_data.tier})
+        return key_data
+
+    logger.warning(f"API key not found: {api_key[:12]}...")
+    metrics.record_counter("auth_api_key_not_found")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API key"
     )
-
-    logger.info(f"Valid API key used", extra={
-        "key_prefix": api_key[:12] + "...",
-        "user_id": key_data.user_id,
-        "tier": key_data.tier
-    })
-
-    metrics.record_counter("auth_api_key_success", labels={"tier": key_data.tier})
-    return key_data
 
 
 async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Security(security)) -> Dict[str, Any]:
@@ -298,7 +322,13 @@ def get_user_rate_limit(user_data: Optional[Dict[str, Any]]) -> int:
 
 # Demo function to initialize some API keys for testing
 def initialize_demo_keys():
-    """Initialize demo API keys for testing purposes."""
+    """Seed the demo account and initialize demo API keys (persisted)."""
+    import auth_store
+
+    try:
+        auth_store.create_user("demo@example.com", "demo123", "basic")
+    except ValueError:
+        pass  # already seeded
     demo_keys = [
         generate_api_key("demo_user_1", "free"),
         generate_api_key("demo_user_2", "basic"),
