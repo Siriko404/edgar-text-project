@@ -5,7 +5,6 @@ Tests for the FastAPI application.
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
-import json
 
 from api import app
 
@@ -162,82 +161,6 @@ class TestCompanyAnalysis:
         assert "An unexpected error occurred" in response.json()["detail"]
 
 
-class TestPaymentEndpoints:
-    """Test Stripe payment integration endpoints."""
-
-    @patch("api.stripe.checkout.Session.create")
-    def test_create_checkout_session_success(self, mock_create, client):
-        """Test successful checkout session creation."""
-        mock_session = MagicMock()
-        mock_session.url = "https://checkout.stripe.com/session123"
-        mock_create.return_value = mock_session
-
-        response = client.post("/create-checkout-session", follow_redirects=False)
-
-        assert response.status_code == 303  # Redirect status
-        assert response.headers["location"] == "https://checkout.stripe.com/session123"
-
-    @patch("api.stripe.checkout.Session.create")
-    def test_create_checkout_session_error(self, mock_create, client):
-        """Test checkout session creation error."""
-        mock_create.side_effect = Exception("Stripe error")
-
-        response = client.post("/create-checkout-session")
-
-        assert response.status_code == 400
-        assert "Stripe error" in response.json()["detail"]
-
-    @patch("api.stripe.Webhook.construct_event")
-    def test_stripe_webhook_success(self, mock_construct, client):
-        """Test successful webhook processing."""
-        mock_event = {
-            "id": "evt_123",
-            "type": "checkout.session.completed",
-            "data": {"object": {"id": "cs_123"}}
-        }
-        mock_construct.return_value = mock_event
-
-        headers = {"stripe-signature": "test_signature"}
-        response = client.post("/webhook", content=b"webhook_payload", headers=headers)
-
-        assert response.status_code == 200
-        assert response.json()["status"] == "success"
-
-    @patch("api.stripe.Webhook.construct_event")
-    def test_stripe_webhook_invalid_payload(self, mock_construct, client):
-        """Test webhook with invalid payload."""
-        mock_construct.side_effect = ValueError("Invalid payload")
-
-        headers = {"stripe-signature": "test_signature"}
-        response = client.post("/webhook", content=b"invalid_payload", headers=headers)
-
-        assert response.status_code == 400
-        assert "Invalid payload" in response.json()["detail"]
-
-    @patch("api.stripe.Webhook.construct_event")
-    def test_stripe_webhook_duplicate_event(self, mock_construct, client):
-        """Test webhook idempotency with duplicate events."""
-        mock_event = {
-            "id": "evt_duplicate",
-            "type": "checkout.session.completed",
-            "data": {"object": {"id": "cs_123"}}
-        }
-        mock_construct.return_value = mock_event
-
-        # Add event to processed set
-        from api import PROCESSED_EVENTS
-        PROCESSED_EVENTS.add("evt_duplicate")
-
-        headers = {"stripe-signature": "test_signature"}
-        response = client.post("/webhook", content=b"webhook_payload", headers=headers)
-
-        assert response.status_code == 200
-        assert response.json()["status"] == "already processed"
-
-        # Clean up
-        PROCESSED_EVENTS.discard("evt_duplicate")
-
-
 class TestAPIDocumentation:
     """Test API documentation endpoints."""
 
@@ -318,15 +241,3 @@ class TestTieredRateLimits:
 
         assert response.status_code == 200
         assert response.headers["X-RateLimit-Limit"] == "1000"
-
-
-# Conftest for shared test configuration
-@pytest.fixture(autouse=True)
-def reset_processed_events():
-    """Reset processed events set before each test."""
-    from api import PROCESSED_EVENTS
-    original_events = PROCESSED_EVENTS.copy()
-    PROCESSED_EVENTS.clear()
-    yield
-    PROCESSED_EVENTS.clear()
-    PROCESSED_EVENTS.update(original_events)

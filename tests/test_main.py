@@ -3,7 +3,7 @@ Tests for the main analysis engine.
 """
 
 import pytest
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, mock_open
 from main import (
     load_lm_dictionary,
     calculate_lm_sentiment,

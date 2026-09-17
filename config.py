@@ -19,9 +19,6 @@ def _get_list(name: str, default: str) -> list:
 
 # --- External services ---
 SEC_API_KEY = os.getenv("SEC_API_KEY", "")
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
-STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
 # --- Auth ---
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
@@ -52,6 +49,4 @@ def validate_required() -> list:
     missing = []
     if not SEC_API_KEY:
         missing.append("SEC_API_KEY")
-    if not STRIPE_SECRET_KEY:
-        missing.append("STRIPE_SECRET_KEY")
     return missing

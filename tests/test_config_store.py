@@ -10,12 +10,10 @@ class TestConfig:
         import config
 
         monkeypatch.delenv("SEC_API_KEY", raising=False)
-        monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
         importlib.reload(config)
         try:
             missing = config.validate_required()
             assert "SEC_API_KEY" in missing
-            assert "STRIPE_SECRET_KEY" in missing
         finally:
             importlib.reload(config)
 

@@ -5,9 +5,6 @@ import os
 # Hermetic defaults so importing app modules never requires real credentials.
 # Individual tests override with mocks as needed.
 os.environ.setdefault("SEC_API_KEY", "test_sec_key")
-os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test_dummy")
-os.environ.setdefault("STRIPE_PRICE_ID", "price_dummy")
-os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
 os.environ.setdefault("JWT_SECRET_KEY", "test_jwt_secret")
 
 
