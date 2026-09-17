@@ -129,25 +129,40 @@ def analyze_company(ticker: str):
     try:
         positive_words, negative_words = load_lm_dictionary()
     except FileNotFoundError as e:
-        return {"error": str(e)}
+        return {"error": str(e), "status": 500}
     if not positive_words and not negative_words:
         return {
-            "error": "LM dictionary loaded empty; refusing to report zero sentiment."
+            "error": "LM dictionary loaded empty; refusing to report zero sentiment.",
+            "status": 500,
         }
 
-    filings = get_latest_10k_filings(ticker)
+    try:
+        filings = get_latest_10k_filings(ticker)
+    except ValueError as e:
+        return {"error": str(e), "status": 500}
     if len(filings) < 2:
-        return {"error": f"Could not retrieve two 10-K filings for {ticker}."}
+        return {
+            "error": f"Could not retrieve two 10-K filings for {ticker}.",
+            "status": 404,
+        }
 
     latest_filing_meta = filings[0]
     prior_filing_meta = filings[1]
 
-    latest_risk_text = get_risk_factors_text(latest_filing_meta["linkToFilingDetails"])
-    prior_risk_text = get_risk_factors_text(prior_filing_meta["linkToFilingDetails"])
+    try:
+        latest_risk_text = get_risk_factors_text(
+            latest_filing_meta["linkToFilingDetails"]
+        )
+        prior_risk_text = get_risk_factors_text(
+            prior_filing_meta["linkToFilingDetails"]
+        )
+    except ValueError as e:
+        return {"error": str(e), "status": 500}
 
     if not latest_risk_text or not prior_risk_text:
         return {
-            "error": "Failed to extract risk factors from one or both filings using ExtractorApi."
+            "error": "Failed to extract risk factors from one or both filings using ExtractorApi.",
+            "status": 502,
         }
 
     # --- Calculations ---

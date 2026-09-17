@@ -151,6 +151,7 @@ class TestAnalyzeCompany:
 
         assert "error" in result
         assert "Could not retrieve two 10-K filings" in result["error"]
+        assert result["status"] == 404
 
     @patch("main.load_lm_dictionary")
     def test_analyze_company_missing_dictionary(self, mock_load_dict):
@@ -161,6 +162,7 @@ class TestAnalyzeCompany:
 
         assert "error" in result
         assert "LM dictionary not found" in result["error"]
+        assert result["status"] == 500
 
     @patch("main.load_lm_dictionary")
     @patch("main.get_latest_10k_filings")
@@ -180,6 +182,7 @@ class TestAnalyzeCompany:
 
         assert "error" in result
         assert "Failed to extract risk factors" in result["error"]
+        assert result["status"] == 502
 
 
 # Integration test (requires actual dependencies, opt-in via --integration)

@@ -13,6 +13,13 @@ import json
 import os
 import secrets
 import tempfile
+import time
+from contextlib import contextmanager
+
+try:
+    import fcntl
+except ImportError:  # Windows: no POSIX locks; atomic replace still applies
+    fcntl = None
 
 TIERS = ("free", "basic", "premium")
 
@@ -35,8 +42,37 @@ def load_store() -> dict:
         data.setdefault("users", {})
         data.setdefault("api_keys", {})
         return data
-    except (FileNotFoundError, ValueError):
+    except FileNotFoundError:
         return _blank()
+    except ValueError as e:
+        # Corrupt file: quarantine it for forensics instead of silently
+        # resetting live identities and keys.
+        backup = f"{path}.corrupt-{int(time.time())}"
+        try:
+            os.replace(path, backup)
+        except OSError:
+            backup = "(backup failed)"
+        print(f"ERROR: auth store corrupt ({e}); moved to {backup}, starting blank.")
+        return _blank()
+
+
+@contextmanager
+def _locked():
+    """Exclusive inter-process lock around read-modify-write cycles.
+
+    Writes already land via atomic os.replace, so readers need no lock;
+    this only serializes writers to prevent lost updates.
+    """
+    if fcntl is None:
+        yield
+        return
+    os.makedirs(os.path.dirname(store_path()) or ".", exist_ok=True)
+    with open(store_path() + ".lock", "w", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _save_store(data: dict) -> None:
@@ -83,21 +119,22 @@ def get_user_by_email(email: str) -> dict | None:
 
 def create_user(email: str, password: str, tier: str = "free") -> dict:
     """Create and persist a user; raises ValueError on duplicates/bad tier."""
-    if tier not in TIERS:
-        raise ValueError(f"Unknown tier: {tier}")
-    data = load_store()
-    key = email.lower()
-    if key in data["users"]:
-        raise ValueError("Account already exists")
-    user_id = f"user_{key.split('@')[0]}"
-    data["users"][key] = {
-        "user_id": user_id,
-        "email": email,
-        "tier": tier,
-        "password_hash": hash_password(password),
-    }
-    _save_store(data)
-    return data["users"][key]
+    with _locked():
+        if tier not in TIERS:
+            raise ValueError(f"Unknown tier: {tier}")
+        data = load_store()
+        key = email.lower()
+        if key in data["users"]:
+            raise ValueError("Account already exists")
+        user_id = f"user_{key.split('@')[0]}"
+        data["users"][key] = {
+            "user_id": user_id,
+            "email": email,
+            "tier": tier,
+            "password_hash": hash_password(password),
+        }
+        _save_store(data)
+        return data["users"][key]
 
 
 def verify_user(email: str, password: str) -> dict | None:
@@ -110,15 +147,16 @@ def verify_user(email: str, password: str) -> dict | None:
 
 def set_user_tier(email: str, tier: str) -> dict:
     """Persist a tier change for a user; raises ValueError when unknown."""
-    if tier not in TIERS:
-        raise ValueError(f"Unknown tier: {tier}")
-    data = load_store()
-    key = email.lower()
-    if key not in data["users"]:
-        raise ValueError("Account not found")
-    data["users"][key]["tier"] = tier
-    _save_store(data)
-    return data["users"][key]
+    with _locked():
+        if tier not in TIERS:
+            raise ValueError(f"Unknown tier: {tier}")
+        data = load_store()
+        key = email.lower()
+        if key not in data["users"]:
+            raise ValueError("Account not found")
+        data["users"][key]["tier"] = tier
+        _save_store(data)
+        return data["users"][key]
 
 
 def save_api_key(record: dict) -> None:
@@ -126,17 +164,18 @@ def save_api_key(record: dict) -> None:
 
     The plaintext key itself is never written to disk.
     """
-    data = load_store()
-    lookup = hashlib.sha256(record["api_key"].encode("utf-8")).hexdigest()
-    data["api_keys"][lookup] = {
-        "key_id": record["key_id"],
-        "user_id": record["user_id"],
-        "tier": record["tier"],
-        "rate_limit": record["rate_limit"],
-        "created_at": record["created_at"],
-        "last_used": record.get("last_used"),
-    }
-    _save_store(data)
+    with _locked():
+        data = load_store()
+        lookup = hashlib.sha256(record["api_key"].encode("utf-8")).hexdigest()
+        data["api_keys"][lookup] = {
+            "key_id": record["key_id"],
+            "user_id": record["user_id"],
+            "tier": record["tier"],
+            "rate_limit": record["rate_limit"],
+            "created_at": record["created_at"],
+            "last_used": record.get("last_used"),
+        }
+        _save_store(data)
 
 
 def get_api_key(api_key: str) -> dict | None:
@@ -149,11 +188,12 @@ def get_api_key(api_key: str) -> dict | None:
 
 
 def touch_api_key(api_key: str, timestamp: str) -> None:
-    data = load_store()
-    lookup = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
-    if lookup in data["api_keys"]:
-        data["api_keys"][lookup]["last_used"] = timestamp
-        _save_store(data)
+    with _locked():
+        data = load_store()
+        lookup = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        if lookup in data["api_keys"]:
+            data["api_keys"][lookup]["last_used"] = timestamp
+            _save_store(data)
 
 
 def find_api_key_by_id(key_id: str) -> dict | None:
@@ -166,12 +206,13 @@ def find_api_key_by_id(key_id: str) -> dict | None:
 
 def delete_api_key_by_lookup(lookup: str) -> bool:
     """Remove a key by its store lookup; True when one was removed."""
-    data = load_store()
-    if lookup in data["api_keys"]:
-        del data["api_keys"][lookup]
-        _save_store(data)
-        return True
-    return False
+    with _locked():
+        data = load_store()
+        if lookup in data["api_keys"]:
+            del data["api_keys"][lookup]
+            _save_store(data)
+            return True
+        return False
 
 
 def delete_api_key_by_id(key_id: str) -> bool:

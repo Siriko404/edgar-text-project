@@ -188,6 +188,39 @@ class TestAPIDocumentation:
         assert "/analyze/{ticker}" in openapi_spec["paths"]
 
 
+class TestAnalysisErrors:
+    """Test that analysis failures map to real HTTP error codes."""
+
+    @patch("api.main.analyze_company")
+    def test_analysis_error_maps_to_status(self, mock_analyze, client):
+        mock_analyze.return_value = {"error": "No such ticker.", "status": 404}
+        response = client.get("/analyze/AAPL")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "No such ticker."
+
+    @patch("api.main.analyze_company")
+    def test_analysis_error_defaults_to_500(self, mock_analyze, client):
+        mock_analyze.return_value = {"error": "Something broke."}
+        response = client.get("/analyze/AAPL")
+        assert response.status_code == 500
+
+
+class TestReadiness:
+    """Test the readiness probe."""
+
+    def test_ready_reports_checks(self, client):
+        response = client.get("/ready")
+        assert response.status_code == 200
+        body = response.json()
+        assert "ready" in body
+        assert set(body["checks"]) == {
+            "sec_api_key",
+            "dictionary",
+            "model",
+            "auth_store",
+        }
+
+
 class TestTieredRateLimits:
     """Test tiered rate limiting and X-RateLimit-* headers."""
 

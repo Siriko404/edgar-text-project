@@ -47,6 +47,8 @@ class TestAuthStoreEdges:
         store.write_text("{not json", encoding="utf-8")
         monkeypatch.setenv("AUTH_STORE_PATH", str(store))
         assert auth_store.load_store() == {"users": {}, "api_keys": {}}
+        backups = list(tmp_path.glob("bad.json.corrupt-*"))
+        assert len(backups) == 1
 
     def test_create_user_bad_tier(self, tmp_path, monkeypatch):
         import auth_store

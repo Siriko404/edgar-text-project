@@ -184,6 +184,32 @@ def get_metrics():
     return metrics.get_summary()
 
 
+@app.get("/ready", tags=["Status"])
+def readiness():
+    """Readiness probe: reports whether the service can do useful work.
+
+    `/` stays a cheap liveness check; orchestration and deploy scripts
+    should gate on this endpoint instead.
+    """
+    checks = {}
+    checks["sec_api_key"] = bool(os.getenv("SEC_API_KEY"))
+    try:
+        positive_words, negative_words = main.load_lm_dictionary()
+        checks["dictionary"] = bool(positive_words or negative_words)
+    except Exception:
+        checks["dictionary"] = False
+    checks["model"] = bool(sentiment_pipeline)
+    try:
+        import auth_store
+
+        auth_store.load_store()
+        checks["auth_store"] = True
+    except Exception:
+        checks["auth_store"] = False
+    ready = all(checks.values())
+    return {"ready": ready, "checks": checks}
+
+
 @app.post("/analyze/sentiment", tags=["Analysis"], response_model=SentimentResponse)
 async def analyze_sentiment(
     request: SentimentRequest,
@@ -258,7 +284,14 @@ def get_analysis(
     try:
         # No 'await' is needed because analyze_company is a regular function
         analysis_result = main.analyze_company(ticker.upper())
+        if isinstance(analysis_result, dict) and "error" in analysis_result:
+            raise HTTPException(
+                status_code=int(analysis_result.get("status", 500)),
+                detail=analysis_result["error"],
+            )
         return analysis_result
+    except HTTPException:
+        raise
     except ValueError as e:
         if "SEC_API_KEY" in str(e):
             raise HTTPException(status_code=500, detail=str(e))
