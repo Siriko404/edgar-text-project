@@ -30,6 +30,7 @@ from monitoring import (  # noqa: E402
 
 # Import authentication
 from auth import (  # noqa: E402
+    get_current_user,
     get_current_user_optional,
     initialize_demo_keys,
 )
@@ -131,7 +132,7 @@ def load_model():
     # Start background monitoring
     start_background_monitoring()
 
-    # Initialize demo API keys for testing
+    # Demo account and keys exist only when ENABLE_DEMO_ACCOUNT=1
     demo_keys = initialize_demo_keys()
     logger.info(
         f"API startup complete - model loaded, monitoring started, {len(demo_keys)} demo keys created"
@@ -190,8 +191,8 @@ def read_root():
 
 
 @app.get("/metrics", tags=["Monitoring"])
-def get_metrics():
-    """Get application metrics and performance data."""
+def get_metrics(user: Dict[str, Any] = Depends(get_current_user)):
+    """Get application metrics and performance data (authentication required)."""
     logger.info("Metrics requested")
     return metrics.get_summary()
 
@@ -306,12 +307,15 @@ def get_analysis(
         raise
     except ValueError as e:
         if "SEC_API_KEY" in str(e):
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"Filing analysis is not configured: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="Filing analysis is not configured on this server.",
+            )
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"An unexpected error occurred: {e}"
-        )
+        logger.exception(f"Unexpected error analysing {ticker}: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred.")
 
 
 def _get_length_bucket(length: int) -> str:

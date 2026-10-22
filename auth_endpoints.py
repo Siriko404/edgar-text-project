@@ -3,7 +3,7 @@ Authentication endpoints for Edgar-Text API.
 """
 
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Response
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -34,7 +34,7 @@ class SignupRequest(BaseModel):
     """User signup request."""
 
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8, max_length=128)
     tier: str = "free"
 
 
@@ -231,23 +231,16 @@ async def revoke_api_key(
         extra={"user_id": current_user["user_id"], "key_id": key_id},
     )
 
-    # Owner-only: a caller can revoke only keys minted for their account.
-    # Unknown and foreign ids both report 404 to avoid existence oracles.
+    # Owner-only: the lookup searches the caller's own keys, by the key_id
+    # prefix returned at creation (8+ characters). Unknown and foreign ids
+    # both report 404 to avoid existence oracles.
     import auth_store
 
-    found = auth_store.find_api_key_by_id(key_id)
-    if found is None or found["user_id"] != current_user["user_id"]:
-        if found is not None:
-            logger.warning(
-                "Cross-account revoke attempt",
-                extra={
-                    "user_id": current_user["user_id"],
-                    "key_id": key_id,
-                },
-            )
-            metrics.record_counter("auth_api_key_revoke_denied")
-        else:
-            metrics.record_counter("auth_api_key_revoke_failed")
+    found = None
+    if len(key_id) >= auth_store.MIN_KEY_ID_LENGTH:
+        found = auth_store.find_api_key_by_id(key_id, current_user["user_id"])
+    if found is None:
+        metrics.record_counter("auth_api_key_revoke_failed")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="API key not found"
         )

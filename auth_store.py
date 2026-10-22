@@ -92,25 +92,46 @@ def _save_store(data: dict) -> None:
         raise
 
 
-def hash_password(password: str, salt: str = None) -> str:
-    """Return 'salt$hex' PBKDF2-SHA256 hash for storage."""
-    salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
+PBKDF2_PREFIX = "pbkdf2_sha256"
+PBKDF2_ITERATIONS = 600_000  # OWASP guidance for PBKDF2-HMAC-SHA256
+LEGACY_ITERATIONS = 100_000  # hashes written before the prefix existed: 'salt$hex'
+
+
+def _pbkdf2(password: str, salt: str, iterations: int) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations
     ).hex()
-    return f"{salt}${digest}"
+
+
+def hash_password(password: str, salt: str = None) -> str:
+    """Return 'pbkdf2_sha256$iterations$salt$hex' for storage."""
+    salt = salt or secrets.token_hex(16)
+    digest = _pbkdf2(password, salt, PBKDF2_ITERATIONS)
+    return f"{PBKDF2_PREFIX}${PBKDF2_ITERATIONS}${salt}${digest}"
 
 
 def check_password(password: str, stored: str) -> bool:
-    """Constant-time comparison of a password against a stored hash."""
+    """Constant-time comparison of a password against a stored hash.
+
+    Reads both the current format and the older 'salt$hex' one (100k rounds).
+    """
+    parts = stored.split("$")
     try:
-        salt, digest = stored.split("$", 1)
+        if parts[0] == PBKDF2_PREFIX and len(parts) == 4:
+            iterations, salt, digest = int(parts[1]), parts[2], parts[3]
+            if not 1 <= iterations <= 5_000_000:
+                return False
+        elif len(parts) == 2:
+            iterations, (salt, digest) = LEGACY_ITERATIONS, parts
+        else:
+            return False
     except ValueError:
         return False
-    candidate = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
-    ).hex()
-    return secrets.compare_digest(candidate, digest)
+    return secrets.compare_digest(_pbkdf2(password, salt, iterations), digest)
+
+
+# Checked when the email is unknown, so a login takes as long either way.
+_DUMMY_HASH = hash_password("not-a-real-password")
 
 
 def get_user_by_email(email: str) -> dict | None:
@@ -126,7 +147,9 @@ def create_user(email: str, password: str, tier: str = "free") -> dict:
         key = email.lower()
         if key in data["users"]:
             raise ValueError("Account already exists")
-        user_id = f"user_{key.split('@')[0]}"
+        # The whole address goes into the id: 'alice@a.com' and 'alice@b.com' are different people.
+        suffix = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+        user_id = f"user_{key.split('@')[0]}_{suffix}"
         data["users"][key] = {
             "user_id": user_id,
             "email": email,
@@ -140,7 +163,10 @@ def create_user(email: str, password: str, tier: str = "free") -> dict:
 def verify_user(email: str, password: str) -> dict | None:
     """Return the user record when credentials match, else None."""
     user = get_user_by_email(email)
-    if user and check_password(password, user.get("password_hash", "")):
+    if user is None:
+        check_password(password, _DUMMY_HASH)
+        return None
+    if check_password(password, user.get("password_hash", "")):
         return user
     return None
 
@@ -196,10 +222,20 @@ def touch_api_key(api_key: str, timestamp: str) -> None:
             _save_store(data)
 
 
-def find_api_key_by_id(key_id: str) -> dict | None:
-    """Find the first record whose key_id contains key_id (for revocation)."""
+MIN_KEY_ID_LENGTH = 8
+
+
+def find_api_key_by_id(key_id: str, user_id: str | None = None) -> dict | None:
+    """Find a key whose key_id starts with key_id (for revocation).
+
+    With user_id, only that user's keys are searched, so one account cannot
+    match another's. Callers that take the id from a request should enforce
+    MIN_KEY_ID_LENGTH first.
+    """
     for lookup, record in load_store()["api_keys"].items():
-        if key_id in record.get("key_id", ""):
+        if user_id is not None and record.get("user_id") != user_id:
+            continue
+        if record.get("key_id", "").startswith(key_id):
             return {**record, "_lookup": lookup}
     return None
 
@@ -215,9 +251,9 @@ def delete_api_key_by_lookup(lookup: str) -> bool:
         return False
 
 
-def delete_api_key_by_id(key_id: str) -> bool:
-    """Remove the first key containing key_id; True when one was removed."""
-    found = find_api_key_by_id(key_id)
+def delete_api_key_by_id(key_id: str, user_id: str | None = None) -> bool:
+    """Remove the first key starting with key_id; True when one was removed."""
+    found = find_api_key_by_id(key_id, user_id)
     if found is None:
         return False
     return delete_api_key_by_lookup(found["_lookup"])

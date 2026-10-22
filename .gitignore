@@ -41,3 +41,10 @@ htmlcov/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Auth store (password hashes, API-key records), its lock, temp and quarantine files
+data/auth_store.json
+data/auth_store.json.*
+data/.auth_store*
+*.corrupt-*
+*.log

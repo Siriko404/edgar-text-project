@@ -64,6 +64,8 @@ A dual-mode financial text analysis API that combines traditional sentiment anal
    ```bash
     # Core dependencies
     pip install -r requirements.txt
+    # To run the tests as well
+    pip install -r requirements-dev.txt
    ```
 
 4. **Configure environment variables**:

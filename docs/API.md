@@ -131,10 +131,12 @@ Authenticate with existing credentials.
 **Request Body:**
 ```json
 {
-  "email": "demo@example.com",
-  "password": "demo123"
+  "email": "you@example.com",
+  "password": "your-password"
 }
 ```
+
+Passwords are at least 8 characters. A `demo@example.com` account exists only when the server runs with `ENABLE_DEMO_ACCOUNT=1`; never enable it on a reachable server.
 
 **Response:** Same as signup
 

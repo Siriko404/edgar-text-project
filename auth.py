@@ -6,7 +6,7 @@ import os
 import jwt
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, status, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -18,12 +18,31 @@ from monitoring import metrics
 logger = get_logger("edgar_text.auth")
 
 # JWT Configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
-if not os.getenv("JWT_SECRET_KEY"):
-    logger.warning(
-        "JWT_SECRET_KEY not set; using an ephemeral secret. "
-        "Set JWT_SECRET_KEY in .env for restarts and multi-worker deployments."
-    )
+PLACEHOLDER_SECRETS = {"change_me_to_a_stable_secret"}
+MIN_SECRET_LENGTH = 16
+
+
+def _load_jwt_secret() -> str:
+    configured = os.getenv("JWT_SECRET_KEY", "")
+    if configured in PLACEHOLDER_SECRETS or (
+        configured and len(configured) < MIN_SECRET_LENGTH
+    ):
+        logger.error(
+            "JWT_SECRET_KEY is a placeholder or shorter than %d characters; "
+            "ignoring it and using an ephemeral secret.",
+            MIN_SECRET_LENGTH,
+        )
+        configured = ""
+    if not configured:
+        logger.warning(
+            "JWT_SECRET_KEY not set; using an ephemeral secret. "
+            "Set JWT_SECRET_KEY in .env for restarts and multi-worker deployments."
+        )
+        return secrets.token_urlsafe(32)
+    return configured
+
+
+JWT_SECRET_KEY = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
 
@@ -131,17 +150,22 @@ def create_jwt_token(user_id: str, email: str = None, tier: str = "free") -> str
 def verify_jwt_token(token: str) -> TokenData:
     """Verify and decode a JWT token."""
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp"]},
+        )
 
         token_data = TokenData(
             user_id=payload["user_id"],
             email=payload.get("email"),
             tier=payload.get("tier", "free"),
-            expires_at=datetime.fromtimestamp(payload["exp"]),
+            expires_at=datetime.fromtimestamp(payload["exp"], timezone.utc),
         )
 
-        # Check if token is expired
-        if token_data.expires_at < datetime.utcnow():
+        # jwt.decode already rejects expired tokens; this is a second check.
+        if token_data.expires_at < datetime.now(timezone.utc):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired"
             )
@@ -318,7 +342,13 @@ def get_user_rate_limit(user_data: Optional[Dict[str, Any]]) -> int:
 
 # Demo function to initialize some API keys for testing
 def initialize_demo_keys():
-    """Seed the demo account and initialize demo API keys (persisted)."""
+    """Seed the demo account and demo API keys, only when ENABLE_DEMO_ACCOUNT=1.
+
+    The demo account has a published password, so it must never exist on a
+    server that is reachable by others.
+    """
+    if os.getenv("ENABLE_DEMO_ACCOUNT") != "1":
+        return []
     import auth_store
 
     try:
