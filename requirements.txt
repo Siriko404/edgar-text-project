@@ -2,7 +2,7 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
 slowapi==0.1.9  # Rate limiting for FastAPI
-python-dotenv==1.1.1
+python-dotenv==1.2.2
 sec-api==1.0.32
 diskcache==5.6.3
 textstat==0.7.8
